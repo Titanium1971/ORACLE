@@ -10,14 +10,6 @@ Objectif :
 
 import os
 
-# === DEPLOY MODE (Replit) : serve Flask API ===
-if os.getenv("REPLIT_DEPLOYMENT") == "1" or os.getenv("DEPLOYMENT") == "1":
-    from server import app  # Flask app in server.py
-
-    port = int(os.getenv("PORT", "8080"))
-    app.run(host="0.0.0.0", port=port)
-    raise SystemExit(0)
-
 AIRTABLE_PAYLOADS_BASE_ID = os.getenv("AIRTABLE_PAYLOADS_BASE_ID")
 
 import json
@@ -436,7 +428,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
         await msg.reply_text(
-            "🕯️ Tu as déjà franchi l’épreuve officielle, une seule fois suffit."
+            "🕯️ Tu as déjà franchi l'épreuve officielle, une seule fois suffit."
         )
         return
 
@@ -630,7 +622,7 @@ def run_flask():
 
 
 # ============================================================================
-#  DEBUG (anti-hallucination : preuve d’updates)
+#  DEBUG (anti-hallucination : preuve d'updates)
 # ============================================================================
 
 
@@ -686,17 +678,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    # --- Velvet deployment rule ---
-    # In Replit Deployments, env vars for Telegram may be absent.
-    # If we try to start the bot without a token, the process exits and the web API dies.
-    # So: if no Telegram token is present, we serve ONLY the Flask API (questions + ritual endpoints).
-    tg_token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_F1_TOKEN")
-
-    if not tg_token:
-        logger.warning("No TELEGRAM token found — starting Flask API only (deploy-safe mode).")
-        run_flask()
-        raise SystemExit(0)
-
     # Token present → run both: Flask API + Telegram bot
     flask_thread = threading.Thread(target=run_flask, daemon=False)
     flask_thread.start()
