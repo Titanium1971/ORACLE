@@ -618,7 +618,9 @@ app = server.app
 
 def run_flask():
     port = int(os.getenv("PORT", "5000"))
+    logger.info("🔵 FLASK STARTING on 0.0.0.0:%s", port)
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+    logger.info("🔴 FLASK STOPPED")
 
 
 # ============================================================================
