@@ -1146,12 +1146,21 @@ if (feedbackFinalSendBtn) {
     }
 
     // ✅ 2) Telegram sendData (bot)
+    console.log("🔍 DEBUG - window.Telegram exists:", !!window.Telegram);
+    console.log("🔍 DEBUG - window.Telegram.WebApp exists:", !!window.Telegram?.WebApp);
+    console.log("🔍 DEBUG - sendData exists:", !!window.Telegram?.WebApp?.sendData);
+    console.log("🔍 DEBUG - finalPayload:", finalPayload);
+    
     try {
-      window.Telegram?.WebApp?.sendData?.(JSON.stringify(finalPayload));
+      if (!window.Telegram || !window.Telegram.WebApp || !window.Telegram.WebApp.sendData) {
+        throw new Error("Telegram WebApp API not available");
+      }
+      window.Telegram.WebApp.sendData(JSON.stringify(finalPayload));
       finalPayloadSent = true;
       console.log("✅ sendData() envoyé (feedback) — payload_len =", JSON.stringify(finalPayload).length);
     } catch (e) {
       console.error("❌ sendData() a échoué (feedback) :", e);
+      console.error("❌ Error details:", e.message, e.stack);
     }
 
     feedbackFinalSendBtn.disabled = true;
@@ -1192,12 +1201,20 @@ if (feedbackFinalCloseBtn) {
 
     // ✅ fallback Telegram si jamais non parti
     if (!finalPayloadSent) {
+      console.log("🔍 DEBUG (fallback) - window.Telegram exists:", !!window.Telegram);
+      console.log("🔍 DEBUG (fallback) - window.Telegram.WebApp exists:", !!window.Telegram?.WebApp);
+      console.log("🔍 DEBUG (fallback) - sendData exists:", !!window.Telegram?.WebApp?.sendData);
+      
       try {
-        window.Telegram?.WebApp?.sendData?.(JSON.stringify(finalPayload));
+        if (!window.Telegram || !window.Telegram.WebApp || !window.Telegram.WebApp.sendData) {
+          throw new Error("Telegram WebApp API not available");
+        }
+        window.Telegram.WebApp.sendData(JSON.stringify(finalPayload));
         finalPayloadSent = true;
         console.log("✅ sendData() envoyé (close fallback) — payload_len =", JSON.stringify(finalPayload).length);
       } catch (e) {
         console.error("❌ sendData() a échoué (close fallback) :", e);
+        console.error("❌ Error details:", e.message, e.stack);
       }
     }
 
