@@ -11,9 +11,9 @@ import random
 from datetime import datetime, timezone
 
 import requests
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='webapp', static_url_path='')
 
 print("🟢 SERVER.PY LOADED - Flask app initialized")
 
@@ -34,6 +34,21 @@ def add_cors_headers(response):
     response.headers[
         "Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Telegram-InitData"
     return response
+
+
+# -----------------------------------------------------
+# Static files (WebApp)
+# -----------------------------------------------------
+@app.route('/webapp/')
+@app.route('/webapp')
+def webapp_index():
+    """Serve webapp index.html"""
+    return send_from_directory('webapp', 'index.html')
+
+@app.route('/webapp/<path:path>')
+def webapp_static(path):
+    """Serve static files from webapp directory"""
+    return send_from_directory('webapp', path)
 
 
 # -----------------------------------------------------
