@@ -2,3 +2,9 @@ flask
 gunicorn
 flask-cors
 requests
+flask
+flask-cors
+gunicorn
+python-telegram-bot
+requests
+telegram

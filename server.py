@@ -11,9 +11,9 @@ import random
 from datetime import datetime, timezone
 
 import requests
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='webapp', static_url_path='')
 
 print("🟢 SERVER.PY LOADED - Flask app initialized")
 
@@ -39,13 +39,18 @@ def add_cors_headers(response):
 # -----------------------------------------------------
 # Routes de base
 # -----------------------------------------------------
-@app.get("/")
-def root():
+@app.get("/api")
+def api_root():
     return jsonify({
         "service": "velvet-mcp-core",
         "status": "ok",
         "version": APP_VERSION,
     }), 200
+
+
+@app.get("/")
+def root():
+    return send_from_directory(app.static_folder, 'index.html')
 
 
 @app.get("/version")
@@ -498,24 +503,6 @@ def ritual_complete():
 
 
 if __name__ == "__main__":
-    # -----------------------------------------------------
-    # Entrypoint local (DEV ONLY)
-    # -----------------------------------------------------
-    # En environnement Publish/WSGI (gunicorn), ce bloc n'est jamais exécuté.
-    # Pour éviter toute confusion et supprimer l'avertissement "development server",
-    # le lancement via `python3 server.py` est désactivé par défaut.
-    #
-    # Pour lancer en local :
-    #   RUN_LOCAL_SERVER=1 PORT=5000 python3 server.py
-    #
-    if os.getenv("RUN_LOCAL_SERVER",
-                 "").strip() not in ("1", "true", "TRUE", "yes", "YES"):
-        print(
-            "ℹ️ server.py: dev server désactivé (set RUN_LOCAL_SERVER=1 pour lancer en local)."
-        )
-        raise SystemExit(0)
-
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Velvet MCP Core listening on port {port}")
-    # use_reloader=False évite un double lancement (et donc des doubles logs / ports déjà utilisés)
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)

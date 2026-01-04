@@ -247,7 +247,7 @@ function getQueryParam(name) {
   }
 }
 
-const DEFAULT_API_URL = "https://velvet-mcp-core--Velvet-elite.replit.app";
+const DEFAULT_API_URL = window.location.origin;
 const QUESTIONS_API_URL = (getQueryParam("api") || DEFAULT_API_URL).replace(/\/+$/, "");
 console.log("✅ API BASE =", QUESTIONS_API_URL);
 
