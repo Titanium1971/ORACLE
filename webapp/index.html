@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Velvet Oracle — Rituel</title>
+
+  <!-- Telegram WebApp SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <link rel="stylesheet" href="./style.css" />
+</head>
+
+<body class="font-velvet">
+  <div class="frame">
+
+    <!-- ÉCRAN 1 -->
+    <div class="screen-intro">
+      <div class="badge">Velvet Oracle — Antichambre</div>
+
+      <div class="card">
+        <div class="logo">
+          <img src="velvet-logo.svg" alt="Velvet Élite — Velvet Oracle">
+        </div>
+
+        <div class="title">Velvet Oracle</div>
+        <div class="subtitle">Rituel d’entrée privé</div>
+
+        <div class="divider"></div>
+
+        <p class="body-text">
+          Ce n’est pas un quiz.
+          C’est un <span>rituel silencieux</span>.
+        </p>
+
+        <p class="footer-text">
+          Une seule fois. Aucun bruit.
+          Juste toi, ton calme intérieur.
+        </p>
+
+        <p class="note">Quand tu te sentiras prêt</p>
+
+        <button class="cta" id="btn-ready">Je suis prêt ●</button>
+      </div>
+
+      <div class="under-card">© Velvet Élite — Edition Oracle.</div>
+    </div>
+
+    <!-- ÉCRAN 2 -->
+    <div class="screen-chamber hidden">
+      <div class="chamber">
+        <div class="logo">
+          <img src="velvet-logo.svg" alt="Velvet Élite — Logo">
+        </div>
+
+        <div class="chamber-heading">Velvet Oracle — Chambre</div>
+        <div class="chamber-title">Silence intérieur</div>
+        <div class="chamber-line"></div>
+
+        <p class="chamber-text">
+          Ici, rien ne se joue sur la chance.
+          Chaque réponse révèle ce que tu maîtrises vraiment.
+          <br><br>
+          Quand tu continues, le <span>temps commence à courir</span>.
+        </p>
+
+        <!-- ✅ Choix de police : géré par app.js (injectFontChooser) -->
+        <!-- (Le bloc HTML "Typographie" a été retiré pour éviter tout doublon.) -->
+
+        <button class="chamber-cta" id="btn-start-ritual">● Commencer le rituel</button>
+      </div>
+    </div>
+
+    <!-- ÉCRAN 3 -->
+    <div class="screen-quiz hidden">
+      <div class="quiz-card">
+        <div class="quiz-vignette" aria-hidden="true"></div>
+        <div class="clock-ring-stroke" aria-hidden="true"></div>
+
+        <div class="quiz-header">
+          <div class="quiz-logo-small">
+            <img src="velvet-logo.svg" alt="Velvet Oracle">
+          </div>
+          <div class="quiz-progress">
+            Q <span id="quiz-index">1</span> / <span id="quiz-total">15</span>
+          </div>
+        </div>
+
+        <div class="quiz-main">
+          <div class="quiz-label" id="quiz-label">Rituel — Série d’entrée</div>
+          <div class="quiz-question" id="quiz-question"></div>
+
+          <!-- Barre de temps (silencieuse) -->
+          <div class="time-rail" id="time-rail" aria-hidden="true">
+            <div class="time-fill" id="time-fill"></div>
+          </div>
+
+          <div class="quiz-meta" id="quiz-meta"></div>
+          <div class="quiz-explanation hidden" id="quiz-explanation"></div>
+        </div>
+
+        <div class="quiz-options" id="quiz-options">
+          <button class="quiz-option" data-display-index="0">
+            <div class="quiz-option-letter">A</div>
+            <div class="quiz-option-text"></div>
+          </button>
+          <button class="quiz-option" data-display-index="1">
+            <div class="quiz-option-letter">B</div>
+            <div class="quiz-option-text"></div>
+          </button>
+          <button class="quiz-option" data-display-index="2">
+            <div class="quiz-option-letter">C</div>
+            <div class="quiz-option-text"></div>
+          </button>
+          <button class="quiz-option" data-display-index="3">
+            <div class="quiz-option-letter">D</div>
+            <div class="quiz-option-text"></div>
+          </button>
+        </div>
+
+        <div class="quiz-footer vertical">
+          <!-- ✅ Affichage par défaut aligné : 00:45 -->
+          <div class="quiz-timer centered" id="quiz-timer">Temps · 00:45</div>
+          <div class="quiz-step centered">
+            ✅ Bonnes réponses :
+            <span id="quiz-correct-count">0</span>
+            /
+            <span id="quiz-current-index">1</span>
+          </div>
+        </div>
+
+        <div class="quiz-actions">
+          <button class="quiz-next" id="btn-next" disabled>Valider la réponse</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ÉCRAN 4 -->
+    <div class="screen-result hidden">
+      <div class="result-card">
+        <div class="logo">
+          <img src="velvet-logo.svg" alt="Velvet Oracle — Résultats">
+        </div>
+
+        <div class="result-heading">Velvet Oracle — Rituel</div>
+        <div class="result-title" id="result-title">Verdict du rituel</div>
+        <div class="result-line"></div>
+
+        <div class="result-score">
+          Score · <span id="result-score">0 / 15</span>
+        </div>
+        <div class="result-meta">
+          Temps total · <span id="result-time">00:00</span>
+        </div>
+
+        <div class="result-subtitle" id="result-subtitle">
+          Ce rituel est une photographie de ce soir.
+          <span>La suite se joue dans la durée.</span>
+        </div>
+
+        <div class="result-note">
+          Ce passage ne te définit pas.
+          Il indique simplement jusqu’où ta culture tient sous pression, ici et maintenant.
+        </div>
+
+        <button class="result-cta" id="btn-go-feedback">
+          Confier ton ressenti & valider ta participation
+        </button>
+      </div>
+    </div>
+
+    <!-- ÉCRAN 5 -->
+    <div class="screen-feedback-final hidden">
+      <div class="feedback-final-card">
+        <div class="logo">
+          <img src="velvet-logo.svg" alt="Velvet Oracle — Feedback">
+        </div>
+
+        <div class="result-heading">Velvet Oracle — Trace silencieuse</div>
+        <div class="result-line" style="margin-bottom:14px;"></div>
+
+        <div class="feedback-title">Laisser une trace pour ton futur toi</div>
+        <div class="feedback-helper">
+          Quelques lignes suffisent.
+          <span>Écris comme si tu te relisais dans quelques années.</span>
+        </div>
+
+        <textarea
+          id="feedback-final-text"
+          class="feedback-textarea"
+          rows="4"
+          placeholder="Note ce qui t’a semblé fluide, ce qui t’a résisté, ce que ce rituel a réveillé en toi : assurance, doute, agacement, envie de hausser ton niveau."
+        ></textarea>
+
+        <button class="feedback-send" id="btn-feedback-final-send">Envoyer ton ressenti</button>
+        <button class="feedback-send hidden" id="btn-feedback-close">Vous pouvez fermer cette fenêtre</button>
+
+        <div class="feedback-final-message hidden" id="feedback-final-message"></div>
+        <div class="feedback-final-signature hidden" id="feedback-final-signature">Velvet Élite · Velvet Oracle</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Micro-son feutré (fichier à fournir) -->
+  <audio id="velvet-tick" preload="auto">
+    <source src="tick-soft.mp3" type="audio/mpeg">
+  </audio>
+
+  <!-- Ton script applicatif -->
+  <script src="./app.js"></script>
+</body>
+</html>
