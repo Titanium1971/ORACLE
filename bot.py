@@ -10,14 +10,6 @@ Objectif :
 
 import os
 
-# === DEPLOY MODE (Replit) : serve Flask API ===
-if os.getenv("REPLIT_DEPLOYMENT") == "1" or os.getenv("DEPLOYMENT") == "1":
-    from server import app  # Flask app in server.py
-
-    port = int(os.getenv("PORT", "8080"))
-    app.run(host="0.0.0.0", port=port)
-    raise SystemExit(0)
-
 AIRTABLE_PAYLOADS_BASE_ID = os.getenv("AIRTABLE_PAYLOADS_BASE_ID")
 
 import json
