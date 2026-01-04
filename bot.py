@@ -435,8 +435,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # ✅ cache-buster réel
     v = int(time.time())
     webapp_url = (
-        "https://velvet-oracle.vercel.app/"
-        f"?api=https://velvet-mcp-core--Velvet-elite.replit.app&v={v}")
+        "https://oracle--Velvet-elite.replit.app/webapp/"
+        f"?api=https://oracle--Velvet-elite.replit.app&v={v}")
     logger.info("🔗 WEBAPP_URL_SENT=%s", webapp_url)
 
     # ✅ iOS/viewport: définir aussi le bouton Menu du chat vers la WebApp.
