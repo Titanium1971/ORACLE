@@ -545,12 +545,12 @@ def ritual_start():
         return ("", 204)
     
     try:
-        print("🔵 DEBUG /ritual/start appelé")
+        print("🔵 DEBUG /ritual/start appelé", flush=True)
 
         payload = _json()
         telegram_user_id = payload.get("telegram_user_id") or payload.get(
             "user_id") or payload.get("tg_user_id")
-        print(f"🔵 telegram_user_id = {telegram_user_id}")
+        print(f"🔵 telegram_user_id = {telegram_user_id}", flush=True)
 
         if not telegram_user_id:
             return jsonify({"ok": False, "error": "missing_telegram_user_id"}), 400
@@ -558,9 +558,9 @@ def ritual_start():
         players_table = os.getenv("AIRTABLE_PLAYERS_TABLE", "players")
         attempts_table = os.getenv("AIRTABLE_ATTEMPTS_TABLE", "rituel_attempts")
         print(
-            f"🔵 players_table = {players_table}, attempts_table = {attempts_table}"
+            f"🔵 players_table = {players_table}, attempts_table = {attempts_table}", flush=True
         )
-        print(f"🔵 payload complet = {payload}")
+        print(f"🔵 payload complet = {payload}", flush=True)
 
         p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
         if not p.get("ok"):
@@ -585,18 +585,18 @@ def ritual_start():
         if payload.get("Players"):
             fields["Players"] = payload.get("Players")
 
-        print(f"🔵 DEBUG - Player record_id créé: {p['record_id']}")
-        print(f"🔵 DEBUG - Tentative création attempt avec fields: {json.dumps(fields, indent=2)}")
+        print(f"🔵 DEBUG - Player record_id créé: {p['record_id']}", flush=True)
+        print(f"🔵 DEBUG - Tentative création attempt avec fields: {json.dumps(fields, indent=2)}", flush=True)
         
         created = airtable_create(attempts_table, fields)
         
-        print(f"🔵 DEBUG - Réponse airtable_create: {json.dumps(created, indent=2)}")
+        print(f"🔵 DEBUG - Réponse airtable_create: {json.dumps(created, indent=2)}", flush=True)
         
         if not created.get("ok"):
-            print(f"🔴 ERREUR AIRTABLE COMPLÈTE:")
-            print(f"🔴 Status Code: {created.get('status')}")
-            print(f"🔴 Data: {json.dumps(created.get('data'), indent=2)}")
-            print(f"🔴 Fields envoyés: {json.dumps(fields, indent=2)}")
+            print(f"🔴 ERREUR AIRTABLE COMPLÈTE:", flush=True)
+            print(f"🔴 Status Code: {created.get('status')}", flush=True)
+            print(f"🔴 Data: {json.dumps(created.get('data'), indent=2)}", flush=True)
+            print(f"🔴 Fields envoyés: {json.dumps(fields, indent=2)}", flush=True)
             return jsonify({
                 "ok": False,
                 "error": "attempt_create_failed",
@@ -613,7 +613,7 @@ def ritual_start():
         })
     
     except Exception as e:
-        print(f"🔴 EXCEPTION DANS /ritual/start: {e}")
+        print(f"🔴 EXCEPTION DANS /ritual/start: {e}", flush=True)
         import traceback
         traceback.print_exc()
         return jsonify({
