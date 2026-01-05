@@ -84,7 +84,8 @@ def check_env_vars():
 def test_airtable_connection():
     print_section("2. TEST CONNEXION AIRTABLE")
     
-    base_id = os.getenv("AIRTABLE_BASE_ID")
+    # Utiliser CORE base pour les tests de joueurs
+    base_id = os.getenv("AIRTABLE_CORE_BASE_ID") or os.getenv("AIRTABLE_BASE_ID")
     api_key = os.getenv("AIRTABLE_API_KEY")
     
     if not base_id or not api_key:
@@ -96,8 +97,9 @@ def test_airtable_connection():
         "Content-Type": "application/json"
     }
     
-    # Test sur la table players
+    # Test sur la table players (dans CORE base)
     table_name = os.getenv("AIRTABLE_PLAYERS_TABLE", "players")
+    print_info(f"Test sur base CORE: {base_id[:10]}...")
     url = f"https://api.airtable.com/v0/{base_id}/{table_name}"
     
     try:
@@ -192,13 +194,16 @@ def test_notion_connection():
 def test_airtable_write():
     print_section("4. TEST D'ÉCRITURE AIRTABLE")
     
-    base_id = os.getenv("AIRTABLE_BASE_ID")
+    # Utiliser CORE base pour l'écriture de joueurs
+    base_id = os.getenv("AIRTABLE_CORE_BASE_ID") or os.getenv("AIRTABLE_BASE_ID")
     api_key = os.getenv("AIRTABLE_API_KEY")
     table_name = os.getenv("AIRTABLE_PLAYERS_TABLE", "players")
     
     if not base_id or not api_key:
         print_error("Variables Airtable manquantes")
         return False
+    
+    print_info(f"Test d'écriture sur base CORE: {base_id[:10]}...")
     
     headers = {
         "Authorization": f"Bearer {api_key}",
