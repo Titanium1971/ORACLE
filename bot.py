@@ -419,6 +419,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not user or not msg:
         return
 
+    # Prevent double execution
+    update_id = update.update_id
+    if context.user_data.get("last_start_update") == update_id:
+        logger.info("⚠️ Ignoring duplicate /start update_id=%s", update_id)
+        return
+    context.user_data["last_start_update"] = update_id
+
     joueur_id = str(user.id)
     admin = is_admin(joueur_id)
     context.user_data["exam_mode"] = "Prod"
