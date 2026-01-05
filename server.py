@@ -416,9 +416,34 @@ def _airtable_headers():
 def _airtable_base_id(table_name=""):
     # Si c'est une table de questions, utiliser AIRTABLE_BASE_ID
     # Sinon utiliser AIRTABLE_CORE_BASE_ID pour players/attempts/etc
-    if table_name == os.getenv("AIRTABLE_TABLE_ID"):
+    questions_table = os.getenv("AIRTABLE_TABLE_ID", "")
+    
+    # Liste des tables qui vont dans CORE (players/attempts/etc)
+    core_tables = [
+        "players",
+        "rituel_attempts", 
+        "rituel_webapp_payloads",
+        "rituel_answers",
+        "rituel_feedback",
+        os.getenv("AIRTABLE_PLAYERS_TABLE", ""),
+        os.getenv("AIRTABLE_ATTEMPTS_TABLE", ""),
+        os.getenv("AIRTABLE_PAYLOADS_TABLE", ""),
+        os.getenv("AIRTABLE_ANSWERS_TABLE", ""),
+        os.getenv("AIRTABLE_FEEDBACK_TABLE", ""),
+    ]
+    
+    # Si c'est la table de questions -> base QUESTIONS
+    if table_name == questions_table:
         return os.getenv("AIRTABLE_BASE_ID")
-    return os.getenv("AIRTABLE_CORE_BASE_ID") or os.getenv("AIRTABLE_BASE_ID")
+    
+    # Si c'est une table de joueurs/tentatives -> base CORE
+    if table_name in core_tables:
+        core_base = os.getenv("AIRTABLE_CORE_BASE_ID")
+        if core_base:
+            return core_base
+    
+    # Fallback sur base questions (ancien comportement)
+    return os.getenv("AIRTABLE_BASE_ID")
 
 
 def _airtable_url(table):
