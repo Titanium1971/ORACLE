@@ -652,14 +652,12 @@ async def debug_any_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def main():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Commandes (PRIORITÉ 1 - avant les autres handlers)
+    # Commandes
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("whoami", whoami))
-
-    # WebApp payloads (PRIORITÉ 2 - seulement pour web_app_data)
-    application.add_handler(
-        MessageHandler(~filters.COMMAND, handle_webapp_data),
-        group=0)
+    
+    # WebApp data handler - ONLY for web_app_data messages
+    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
 
     # Debug global
     application.add_handler(TypeHandler(Update, debug_any_update), group=-1)
