@@ -11,9 +11,9 @@ import random
 from datetime import datetime, timezone
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request
 
-app = Flask(__name__, static_folder='webapp', static_url_path='')
+app = Flask(__name__)
 
 print("🟢 SERVER.PY LOADED - Flask app initialized")
 
@@ -22,6 +22,207 @@ from flask_cors import CORS
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 APP_VERSION = "v0.9-debug-airtable-errors"
+
+# ============================================================================
+#  NOTION CONFIGURATION (for ritual/complete endpoint)
+# ============================================================================
+NOTION_API_KEY = os.getenv("NOTION_API_KEY")
+NOTION_EXAMS_DB_ID = os.getenv("NOTION_EXAMS_DB_ID")
+
+NOTION_FIELDS = {
+    "joueur_id": "Joueur ID",
+    "mode": "Mode",
+    "score": "Score",
+    "statut": "Statut",
+    "date": "Date/Heure",
+    "time_s": "Temps total (s)",
+    "time_mmss": "Temps total (mm:ss)",
+    "reponses": "Réponses",
+    "commentaires": "Commentaires",
+    "version_bot": "Version Bot",
+    "profil_joueur": "Profil joueur",
+    "nom_utilisateur": "Nom utilisateur",
+    "username_telegram": "Username Telegram",
+}
+
+NOTION_BASE_URL = "https://api.notion.com/v1"
+
+def get_notion_headers():
+    if not NOTION_API_KEY:
+        return None
+    return {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+    }
+
+def format_time_mmss(total_seconds):
+    if total_seconds < 0:
+        total_seconds = 0
+    minutes = total_seconds // 60
+    seconds = total_seconds % 60
+    return f"{minutes:02d}:{seconds:02d}"
+
+def compute_statut(score, total_questions, mode):
+    if total_questions <= 0:
+        return "En cours"
+    if mode != "Prod":
+        return "En cours"
+    seuil = max(1, int(round(total_questions * 0.75))) if total_questions > 0 else 12
+    return "Admis" if score >= seuil else "Refusé"
+
+def compute_player_profile(score, total_questions, total_time_s):
+    if total_questions <= 0:
+        return "Oracle en Devenir"
+    ratio = score / total_questions
+    avg_time = total_time_s / total_questions if total_time_s > 0 else None
+
+    if ratio >= 0.85:
+        if avg_time is not None and avg_time <= 5:
+            return "Esprit Fulgurant"
+        return "Stratège Silencieux"
+    elif ratio >= 0.65:
+        return "Explorateur Patient"
+    elif ratio >= 0.45:
+        return "Éclaireur Instinctif"
+    return "Oracle en Devenir"
+
+def format_answers_pretty(answers):
+    if not isinstance(answers, list):
+        return "-"
+    lines = []
+    for a in answers:
+        if not isinstance(a, dict):
+            continue
+        qid = a.get("question_id") or a.get("ID_question") or "?"
+
+        # Check both choice_letter and selected_index
+        choice_letter = a.get("choice_letter")
+        if not choice_letter:
+            selected_idx = a.get("selected_index")
+            if selected_idx is not None:
+                choice_letter = chr(65 + int(selected_idx))  # 0->A, 1->B, etc
+            else:
+                choice_letter = "-"
+
+        is_correct = a.get("is_correct")
+        status = (a.get("status") or "").lower()
+
+        if is_correct is True or status == "correct":
+            mark = "✅"
+        elif status == "timeout":
+            mark = "⏳"
+        else:
+            mark = "❌"
+
+        lines.append(f"{qid} : {choice_letter} {mark}")
+    return "\n".join(lines) if lines else "-"
+
+def write_to_notion(payload):
+    """Write ritual completion data to Notion"""
+    if not NOTION_API_KEY or not NOTION_EXAMS_DB_ID:
+        print("⚠️ Notion API key or DB ID not configured")
+        return {"ok": False, "error": "notion_not_configured"}
+
+    try:
+        # Extract data from payload
+        score = payload.get("score") or 0
+        total = payload.get("total") or 15
+        time_seconds = payload.get("time_total_seconds") or payload.get("time_spent_seconds") or 0
+        time_formatted = payload.get("time_formatted") or format_time_mmss(time_seconds)
+        answers = payload.get("answers") or []
+        comment = payload.get("comment_text") or payload.get("feedback_text") or "-"
+        telegram_user_id = str(payload.get("telegram_user_id") or payload.get("user_id") or "unknown")
+
+        # Compute profile and status
+        profil = compute_player_profile(score, total, time_seconds)
+        statut = compute_statut(score, total, "Prod")
+        answers_text = format_answers_pretty(answers)
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        properties = {
+            NOTION_FIELDS["joueur_id"]: {
+                "title": [{
+                    "type": "text",
+                    "text": {"content": telegram_user_id}
+                }]
+            },
+            NOTION_FIELDS["mode"]: {
+                "select": {"name": "Prod"}
+            },
+            NOTION_FIELDS["score"]: {
+                "number": int(score)
+            },
+            NOTION_FIELDS["statut"]: {
+                "select": {"name": statut}
+            },
+            NOTION_FIELDS["date"]: {
+                "date": {"start": now}
+            },
+            NOTION_FIELDS["time_s"]: {
+                "number": int(time_seconds)
+            },
+            NOTION_FIELDS["time_mmss"]: {
+                "rich_text": [{
+                    "type": "text",
+                    "text": {"content": time_formatted}
+                }]
+            },
+            NOTION_FIELDS["reponses"]: {
+                "rich_text": [{
+                    "type": "text",
+                    "text": {"content": (answers_text or "-")[:1900]}
+                }]
+            },
+            NOTION_FIELDS["commentaires"]: {
+                "rich_text": [{
+                    "type": "text",
+                    "text": {"content": (comment or "-")[:1900]}
+                }]
+            },
+            NOTION_FIELDS["version_bot"]: {
+                "rich_text": [{
+                    "type": "text",
+                    "text": {"content": "rituel_full_v1_http"}
+                }]
+            },
+            NOTION_FIELDS["profil_joueur"]: {
+                "select": {"name": profil}
+            },
+            NOTION_FIELDS["nom_utilisateur"]: {
+                "rich_text": [{
+                    "type": "text",
+                    "text": {"content": "-"}
+                }]
+            },
+            NOTION_FIELDS["username_telegram"]: {
+                "rich_text": [{
+                    "type": "text",
+                    "text": {"content": "-"}
+                }]
+            },
+        }
+
+        url = f"{NOTION_BASE_URL}/pages"
+        notion_payload = {
+            "parent": {"database_id": NOTION_EXAMS_DB_ID},
+            "properties": properties
+        }
+
+        headers = get_notion_headers()
+        resp = requests.post(url, headers=headers, json=notion_payload, timeout=20)
+
+        if resp.status_code < 300:
+            print(f"✅ Notion page created: {resp.json().get('id')}")
+            return {"ok": True, "page_id": resp.json().get("id")}
+        else:
+            print(f"❌ Notion error {resp.status_code}: {resp.text[:500]}")
+            return {"ok": False, "error": resp.text[:500]}
+
+    except Exception as e:
+        print(f"❌ Exception writing to Notion: {e}")
+        return {"ok": False, "error": str(e)}
 
 
 # -----------------------------------------------------
@@ -34,21 +235,6 @@ def add_cors_headers(response):
     response.headers[
         "Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Telegram-InitData"
     return response
-
-
-# -----------------------------------------------------
-# Static files (WebApp)
-# -----------------------------------------------------
-@app.route('/webapp/')
-@app.route('/webapp')
-def webapp_index():
-    """Serve webapp index.html"""
-    return send_from_directory('webapp', 'index.html')
-
-@app.route('/webapp/<path:path>')
-def webapp_static(path):
-    """Serve static files from webapp directory"""
-    return send_from_directory('webapp', path)
 
 
 # -----------------------------------------------------
@@ -368,11 +554,11 @@ def ritual_start():
 
     print(f"🔵 DEBUG - Player record_id créé: {p['record_id']}")
     print(f"🔵 DEBUG - Tentative création attempt avec fields: {json.dumps(fields, indent=2)}")
-    
+
     created = airtable_create(attempts_table, fields)
-    
+
     print(f"🔵 DEBUG - Réponse airtable_create: {json.dumps(created, indent=2)}")
-    
+
     if not created.get("ok"):
         print(f"🔴 ERREUR AIRTABLE COMPLÈTE:")
         print(f"🔴 Status Code: {created.get('status')}")
@@ -495,6 +681,17 @@ def ritual_complete():
             fields["text"] = str(fb)
         feedback_res = airtable_create(feedback_table, fields)
 
+    # 5) ✅ WRITE TO NOTION (new!)
+    notion_res = None
+    try:
+        notion_res = write_to_notion(payload)
+        if notion_res.get("ok"):
+            print(f"✅ NOTION WRITE SUCCESS: page_id={notion_res.get('page_id')}")
+        else:
+            print(f"⚠️ NOTION WRITE FAILED: {notion_res.get('error')}")
+    except Exception as e:
+        print(f"❌ NOTION WRITE EXCEPTION: {e}")
+
     return jsonify({
         "ok":
         True,
@@ -509,6 +706,8 @@ def ritual_complete():
         answers_inserted,
         "feedback_logged":
         feedback_res.get("ok") if feedback_res else None,
+        "notion_written":
+        notion_res.get("ok") if notion_res else False,
     })
 
 
