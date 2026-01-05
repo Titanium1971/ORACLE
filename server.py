@@ -608,7 +608,7 @@ def ritual_start():
         return jsonify({
             "ok": True,
             "version": APP_VERSION,
-            "attempt_record_id": created["data"]["id"],
+            "attempt_id": created["data"]["id"],
             "player_record_id": p["record_id"],
         })
     
