@@ -11,9 +11,9 @@ import random
 from datetime import datetime, timezone
 
 import requests
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='webapp', static_url_path='/webapp')
 
 print("🟢 SERVER.PY LOADED - Flask app initialized")
 
@@ -247,6 +247,12 @@ def root():
         "status": "ok",
         "version": APP_VERSION,
     }), 200
+
+
+@app.get("/webapp/")
+def webapp_index():
+    """Serve the Telegram WebApp"""
+    return send_from_directory('webapp', 'index.html')
 
 
 @app.get("/version")
