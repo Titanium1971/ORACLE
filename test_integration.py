@@ -217,7 +217,7 @@ def test_airtable_write():
     payload = {
         "fields": {
             "telegram_user_id": test_id,
-            "first_seen": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
     }
     
