@@ -545,18 +545,18 @@ def ritual_start():
         return ("", 204)
     
     try:
-        print("🔵 DEBUG /ritual/start appelé", flush=True)
+        print("🔵 DEBUG /ritual/start appelé")
 
         payload = _json()
         telegram_user_id = payload.get("telegram_user_id") or payload.get(
             "user_id") or payload.get("tg_user_id")
-        print(f"🔵 telegram_user_id = {telegram_user_id}", flush=True)
+        print(f"🔵 telegram_user_id = {telegram_user_id}")
 
         if not telegram_user_id:
             return jsonify({"ok": False, "error": "missing_telegram_user_id"}), 400
 
-        players_table = os.getenv("AIRTABLE_PLAYERS_TABLE", "players")
-        attempts_table = os.getenv("AIRTABLE_ATTEMPTS_TABLE", "rituel_attempts")
+        players_table = os.getenv("AIRTABLE_PLAYERS_TABLE") or "players"
+        attempts_table = os.getenv("AIRTABLE_ATTEMPTS_TABLE") or "rituel_attempts"
         print(
             f"🔵 players_table = {players_table}, attempts_table = {attempts_table}", flush=True
         )
@@ -570,13 +570,23 @@ def ritual_start():
                 "details": p
             }), 500
 
+        # Translate mode for Airtable (app.js sends "rituel_full_v1" but Airtable expects "PROD" or "TEST")
+        raw_mode = payload.get("mode") or payload.get("env") or "PROD"
+        if raw_mode in ("rituel_full_v1", "ritual_full_v1", "rituel_v1", "ritual_v1"):
+            airtable_mode = "PROD"
+        elif raw_mode == "TEST":
+            airtable_mode = "TEST"
+        else:
+            airtable_mode = "PROD"  # fallback
+        
+        print(f"🔵 Mode translation: {raw_mode} → {airtable_mode}", flush=True)
+
         # Create attempt (write only whitelisted raw fields; never computed/system fields)
         fields = {
             "player": [p["record_id"]],
             "started_at":
             payload.get("started_at") or datetime.now(timezone.utc).isoformat(),
-            "mode":
-            payload.get("mode") or payload.get("env") or "PROD",
+            "mode": airtable_mode,
             "status":
             payload.get("status") or "STARTED",
             "status_technique": "INIT",  # Champ obligatoire pour Airtable
@@ -585,18 +595,18 @@ def ritual_start():
         if payload.get("Players"):
             fields["Players"] = payload.get("Players")
 
-        print(f"🔵 DEBUG - Player record_id créé: {p['record_id']}", flush=True)
-        print(f"🔵 DEBUG - Tentative création attempt avec fields: {json.dumps(fields, indent=2)}", flush=True)
+        print(f"🔵 DEBUG - Player record_id créé: {p['record_id']}")
+        print(f"🔵 DEBUG - Tentative création attempt avec fields: {json.dumps(fields, indent=2)}")
         
         created = airtable_create(attempts_table, fields)
         
-        print(f"🔵 DEBUG - Réponse airtable_create: {json.dumps(created, indent=2)}", flush=True)
+        print(f"🔵 DEBUG - Réponse airtable_create: {json.dumps(created, indent=2)}")
         
         if not created.get("ok"):
-            print(f"🔴 ERREUR AIRTABLE COMPLÈTE:", flush=True)
-            print(f"🔴 Status Code: {created.get('status')}", flush=True)
-            print(f"🔴 Data: {json.dumps(created.get('data'), indent=2)}", flush=True)
-            print(f"🔴 Fields envoyés: {json.dumps(fields, indent=2)}", flush=True)
+            print(f"🔴 ERREUR AIRTABLE COMPLÈTE:")
+            print(f"🔴 Status Code: {created.get('status')}")
+            print(f"🔴 Data: {json.dumps(created.get('data'), indent=2)}")
+            print(f"🔴 Fields envoyés: {json.dumps(fields, indent=2)}")
             return jsonify({
                 "ok": False,
                 "error": "attempt_create_failed",
@@ -613,7 +623,7 @@ def ritual_start():
         })
     
     except Exception as e:
-        print(f"🔴 EXCEPTION DANS /ritual/start: {e}", flush=True)
+        print(f"🔴 EXCEPTION DANS /ritual/start: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({
@@ -676,10 +686,20 @@ def ritual_complete():
             ("score_max", "score_max"),
             ("time_total_seconds", "time_total_seconds"),
             ("result", "result"),
-            ("mode", "mode"),
         ]:
             if payload.get(k_src) is not None:
                 upd[k_dst] = payload.get(k_src)
+        
+        # Translate mode for Airtable
+        if payload.get("mode") is not None:
+            raw_mode = payload.get("mode")
+            if raw_mode in ("rituel_full_v1", "ritual_full_v1", "rituel_v1", "ritual_v1"):
+                upd["mode"] = "PROD"
+            elif raw_mode == "TEST":
+                upd["mode"] = "TEST"
+            else:
+                upd["mode"] = "PROD"
+        
         attempt_update = airtable_update(attempts_table,
                                          str(attempt_record_id), upd)
 
