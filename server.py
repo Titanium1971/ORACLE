@@ -543,72 +543,84 @@ def __routes():
 def ritual_start():
     if request.method == "OPTIONS":
         return ("", 204)
-    print("🔵 DEBUG /ritual/start appelé")
+    
+    try:
+        print("🔵 DEBUG /ritual/start appelé")
 
-    payload = _json()
-    telegram_user_id = payload.get("telegram_user_id") or payload.get(
-        "user_id") or payload.get("tg_user_id")
-    print(f"🔵 telegram_user_id = {telegram_user_id}")
+        payload = _json()
+        telegram_user_id = payload.get("telegram_user_id") or payload.get(
+            "user_id") or payload.get("tg_user_id")
+        print(f"🔵 telegram_user_id = {telegram_user_id}")
 
-    if not telegram_user_id:
-        return jsonify({"ok": False, "error": "missing_telegram_user_id"}), 400
+        if not telegram_user_id:
+            return jsonify({"ok": False, "error": "missing_telegram_user_id"}), 400
 
-    players_table = os.getenv("AIRTABLE_PLAYERS_TABLE", "players")
-    attempts_table = os.getenv("AIRTABLE_ATTEMPTS_TABLE", "rituel_attempts")
-    print(
-        f"🔵 players_table = {players_table}, attempts_table = {attempts_table}"
-    )
-    print(f"🔵 payload complet = {payload}")
+        players_table = os.getenv("AIRTABLE_PLAYERS_TABLE", "players")
+        attempts_table = os.getenv("AIRTABLE_ATTEMPTS_TABLE", "rituel_attempts")
+        print(
+            f"🔵 players_table = {players_table}, attempts_table = {attempts_table}"
+        )
+        print(f"🔵 payload complet = {payload}")
 
-    p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
-    if not p.get("ok"):
+        p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
+        if not p.get("ok"):
+            return jsonify({
+                "ok": False,
+                "error": "player_upsert_failed",
+                "details": p
+            }), 500
+
+        # Create attempt (write only whitelisted raw fields; never computed/system fields)
+        fields = {
+            "player": [p["record_id"]],
+            "started_at":
+            payload.get("started_at") or datetime.now(timezone.utc).isoformat(),
+            "mode":
+            payload.get("mode") or payload.get("env") or "PROD",
+            "status":
+            payload.get("status") or "STARTED",
+            "status_technique": "INIT",  # Champ obligatoire pour Airtable
+        }
+        # optional text mirror if you have one; safe to ignore if field absent
+        if payload.get("Players"):
+            fields["Players"] = payload.get("Players")
+
+        print(f"🔵 DEBUG - Player record_id créé: {p['record_id']}")
+        print(f"🔵 DEBUG - Tentative création attempt avec fields: {json.dumps(fields, indent=2)}")
+        
+        created = airtable_create(attempts_table, fields)
+        
+        print(f"🔵 DEBUG - Réponse airtable_create: {json.dumps(created, indent=2)}")
+        
+        if not created.get("ok"):
+            print(f"🔴 ERREUR AIRTABLE COMPLÈTE:")
+            print(f"🔴 Status Code: {created.get('status')}")
+            print(f"🔴 Data: {json.dumps(created.get('data'), indent=2)}")
+            print(f"🔴 Fields envoyés: {json.dumps(fields, indent=2)}")
+            return jsonify({
+                "ok": False,
+                "error": "attempt_create_failed",
+                "details": created,
+                "fields_sent": fields,
+                "airtable_response": created.get("data")
+            }), 500
+
+        return jsonify({
+            "ok": True,
+            "version": APP_VERSION,
+            "attempt_record_id": created["data"]["id"],
+            "player_record_id": p["record_id"],
+        })
+    
+    except Exception as e:
+        print(f"🔴 EXCEPTION DANS /ritual/start: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             "ok": False,
-            "error": "player_upsert_failed",
-            "details": p
+            "error": "internal_server_error",
+            "message": str(e)
         }), 500
-
-    # Create attempt (write only whitelisted raw fields; never computed/system fields)
-    fields = {
-        "player": [p["record_id"]],
-        "started_at":
-        payload.get("started_at") or datetime.now(timezone.utc).isoformat(),
-        "mode":
-        payload.get("mode") or payload.get("env") or "PROD",
-        "status":
-        payload.get("status") or "STARTED",
-        "status_technique": "INIT",  # Champ obligatoire pour Airtable
-    }
-    # optional text mirror if you have one; safe to ignore if field absent
-    if payload.get("Players"):
-        fields["Players"] = payload.get("Players")
-
-    print(f"🔵 DEBUG - Player record_id créé: {p['record_id']}")
-    print(f"🔵 DEBUG - Tentative création attempt avec fields: {json.dumps(fields, indent=2)}")
-    
-    created = airtable_create(attempts_table, fields)
-    
-    print(f"🔵 DEBUG - Réponse airtable_create: {json.dumps(created, indent=2)}")
-    
-    if not created.get("ok"):
-        print(f"🔴 ERREUR AIRTABLE COMPLÈTE:")
-        print(f"🔴 Status Code: {created.get('status')}")
-        print(f"🔴 Data: {json.dumps(created.get('data'), indent=2)}")
-        print(f"🔴 Fields envoyés: {json.dumps(fields, indent=2)}")
-        return jsonify({
-            "ok": False,
-            "error": "attempt_create_failed",
-            "details": created,
-            "fields_sent": fields,
-            "airtable_response": created.get("data")
-        }), 500
-
-    return jsonify({
-        "ok": True,
-        "version": APP_VERSION,
-        "attempt_record_id": created["data"]["id"],
-        "player_record_id": p["record_id"],
-    })
 
 
 @app.route("/ritual/complete", methods=["POST", "OPTIONS"])
