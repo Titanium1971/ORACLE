@@ -419,12 +419,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not user or not msg:
         return
 
-    # Prevent double execution
-    update_id = update.update_id
-    if context.user_data.get("last_start_update") == update_id:
-        logger.info("⚠️ Ignoring duplicate /start update_id=%s", update_id)
+    # Prevent rapid double-tap (Telegram sometimes sends /start twice)
+    now = time.time()
+    last_start = context.user_data.get("last_start_time", 0)
+    if now - last_start < 2:  # Less than 2 seconds
+        logger.info("⚠️ Ignoring rapid duplicate /start (%.1fs apart)", now - last_start)
         return
-    context.user_data["last_start_update"] = update_id
+    context.user_data["last_start_time"] = now
 
     joueur_id = str(user.id)
     admin = is_admin(joueur_id)
