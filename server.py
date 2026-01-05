@@ -541,13 +541,19 @@ def __routes():
 
 @app.route("/ritual/start", methods=["POST", "OPTIONS"])
 def ritual_start():
+    print("🟣 /ritual/start ENTRY - method =", request.method)
+    
     if request.method == "OPTIONS":
+        print("🟣 Returning OPTIONS 204")
         return ("", 204)
     
     try:
         print("🔵 DEBUG /ritual/start appelé")
+        print("🔵 request.data =", request.data[:200] if request.data else "EMPTY")
+        print("🔵 request.content_type =", request.content_type)
 
         payload = _json()
+        print("🔵 payload après _json() =", payload)
         telegram_user_id = payload.get("telegram_user_id") or payload.get(
             "user_id") or payload.get("tg_user_id")
         print(f"🔵 telegram_user_id = {telegram_user_id}")
