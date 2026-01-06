@@ -412,6 +412,13 @@ def _utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+def airtable_quote(value) -> str:
+    """Quote and escape a value for Airtable filterByFormula strings."""
+    s = str(value)
+    s = s.replace('"', '\\"')
+    return f'"{s}"'
+
+
 
 def _airtable_headers():
     key = os.getenv("AIRTABLE_API_KEY") or os.getenv("AIRTABLE_KEY")
@@ -622,6 +629,44 @@ def ritual_start():
         }
         if payload.get("Players"):
             fields["Players"] = payload.get("Players")
+
+        # Idempotence (BETA): évite les doublons si /ritual/complete est appelé plusieurs fois.
+
+        # Un rituel est unique par (player.telegram_user_id + started_at + completed_at + env).
+
+        try:
+
+            formula = (
+
+                "AND("
+
+                f"{{env}}={airtable_quote('BETA')},"
+
+                f"ARRAYJOIN({{player}})={airtable_quote(str(telegram_user_id))},"
+
+                f"IS_SAME({{started_at}}, DATETIME_PARSE({airtable_quote(started_at)}), 'second'),"
+
+                f"IS_SAME({{completed_at}}, DATETIME_PARSE({airtable_quote(completed_at)}), 'second')"
+
+                ")"
+
+            )
+
+            existing = airtable_find_one(attempts_table, formula)
+
+            if existing.get("ok") and existing.get("records"):
+
+                rec_id = existing["records"][0].get("id")
+
+                return jsonify({"ok": True, "deduped": True, "attempt_record_id": rec_id, "env": "BETA"}), 200
+
+        except Exception:
+
+            # En cas d'échec du check, on continue et on tente l'écriture (meilleur effort)
+
+            pass
+
+
 
         created = airtable_create(attempts_table, fields)
         if created.get("ok"):
