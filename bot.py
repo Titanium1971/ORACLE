@@ -1,65 +1,34 @@
-"""
-bot.py — Velvet Oracle — WebApp Edition (PROD stable)
-
-Objectif :
-- WebApp ouverte depuis bouton Telegram (InlineKeyboardButton web_app)
-- WebApp envoie Telegram.WebApp.sendData(payload)
-- Bot reçoit WEB_APP_DATA (Update.message.web_app_data) et écrit dans Notion
-- Flask backend unique (server.py) servi par ce même process (Run = Publish identiques)
-"""
+# server.py — Velvet MCP Core (local, propre, souverain)
+# -----------------------------------------------------
+# - /health avec ping Airtable réel
+# - CORS actif
+# - /questions/random renvoie des questions prêtes pour le front
+# - Tirage réellement aléatoire via champ "Rand" (Airtable)
 
 import os
-
-AIRTABLE_PAYLOADS_BASE_ID = os.getenv("AIRTABLE_PAYLOADS_BASE_ID")
-
 import json
-import logging
-import threading
-import asyncio
-import time
+import random
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, List
 
 import requests
+from flask import Flask, jsonify, request, send_from_directory
 
-# ✅ backend UNIQUE importé
-import server  # server.py — Velvet MCP Core (questions/random, feedback endpoint éventuel, health, CORS, etc.)
+app = Flask(__name__, static_folder='webapp', static_url_path='/webapp')
 
-from telegram import (
-    Update,
-    WebAppInfo,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ReplyKeyboardRemove,
-    MenuButtonWebApp)
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    TypeHandler,
-    filters)
+print("🟢 SERVER.PY LOADED - Flask app initialized")
 
+from flask_cors import CORS
+
+CORS(app, resources={r"/*": {"origins": "*"}})
+
+APP_VERSION = "v0.9-debug-airtable-errors"
+
+VERSION_TAG = "v2026-01-06_telemetry-seal"
 # ============================================================================
-#  CONFIG
+#  NOTION CONFIGURATION (for ritual/complete endpoint)
 # ============================================================================
-
-BOT_VERSION = "webapp_prod_v7_menu_button_fullheight"
-
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv(
-    "TELEGRAM_F1_TOKEN")
 NOTION_API_KEY = os.getenv("NOTION_API_KEY")
 NOTION_EXAMS_DB_ID = os.getenv("NOTION_EXAMS_DB_ID")
-
-if not TELEGRAM_BOT_TOKEN:
-    raise RuntimeError("TELEGRAM_BOT_TOKEN manquant.")
-if not NOTION_API_KEY:
-    raise RuntimeError("NOTION_API_KEY manquant.")
-if not NOTION_EXAMS_DB_ID:
-    raise RuntimeError("NOTION_EXAMS_DB_ID manquant.")
-
-ADMIN_IDS_RAW = os.getenv("VELVET_ADMIN_IDS") or os.getenv("ADMIN_IDS") or ""
-ADMIN_IDS = {x.strip() for x in ADMIN_IDS_RAW.split(",") if x.strip()}
 
 NOTION_FIELDS = {
     "joueur_id": "Joueur ID",
@@ -77,61 +46,33 @@ NOTION_FIELDS = {
     "username_telegram": "Username Telegram",
 }
 
-# ============================================================================
-#  LOGGING
-# ============================================================================
+NOTION_BASE_URL = "https://api.notion.com/v1"
 
-logging.basicConfig(
-    format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
-    level=logging.INFO)
-logger = logging.getLogger(__name__)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
-logging.getLogger("telegram").setLevel(logging.WARNING)
-logging.getLogger("telegram.ext").setLevel(logging.WARNING)
+def get_notion_headers():
+    if not NOTION_API_KEY:
+        return None
+    return {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+    }
 
-# ============================================================================
-#  HELPERS
-# ============================================================================
-
-
-def is_admin(joueur_id: str) -> bool:
-    return str(joueur_id) in ADMIN_IDS
-
-
-def _first_str(payload: Dict[str, Any], keys: List[str]) -> Optional[str]:
-    for k in keys:
-        v = payload.get(k)
-        if v is None:
-            continue
-        if isinstance(v, str) and v.strip() == "":
-            continue
-        return str(v)
-    return None
-
-
-def _first_int(payload: Dict[str, Any], keys: List[str]) -> Optional[int]:
-    for k in keys:
-        v = payload.get(k)
-        if v is None:
-            continue
-        try:
-            return int(float(v))
-        except Exception:
-            continue
-    return None
-
-
-def format_time_mmss(total_seconds: int) -> str:
+def format_time_mmss(total_seconds):
     if total_seconds < 0:
         total_seconds = 0
     minutes = total_seconds // 60
     seconds = total_seconds % 60
     return f"{minutes:02d}:{seconds:02d}"
 
+def compute_statut(score, total_questions, mode):
+    if total_questions <= 0:
+        return "En cours"
+    if mode != "Prod":
+        return "En cours"
+    seuil = max(1, int(round(total_questions * 0.75))) if total_questions > 0 else 12
+    return "Admis" if score >= seuil else "Refusé"
 
-def compute_player_profile(score: int, total_questions: int,
-                           total_time_s: int) -> str:
+def compute_player_profile(score, total_questions, total_time_s):
     if total_questions <= 0:
         return "Oracle en Devenir"
     ratio = score / total_questions
@@ -147,551 +88,735 @@ def compute_player_profile(score: int, total_questions: int,
         return "Éclaireur Instinctif"
     return "Oracle en Devenir"
 
-
-def format_answers_pretty(answers: List[Dict[str, Any]]) -> str:
-    lines: List[str] = []
+def format_answers_pretty(answers):
+    if not isinstance(answers, list):
+        return "-"
+    lines = []
     for a in answers:
-        qid = a.get("question_id") or "?"
-        letter = a.get("choice_letter") or "-"
+        if not isinstance(a, dict):
+            continue
+        qid = a.get("question_id") or a.get("ID_question") or "?"
+
+        # Check both choice_letter and selected_index
+        choice_letter = a.get("choice_letter")
+        if not choice_letter:
+            selected_idx = a.get("selected_index")
+            if selected_idx is not None:
+                choice_letter = chr(65 + int(selected_idx))  # 0->A, 1->B, etc
+            else:
+                choice_letter = "-"
+
+        is_correct = a.get("is_correct")
         status = (a.get("status") or "").lower()
-        if status == "correct":
+
+        if is_correct is True or status == "correct":
             mark = "✅"
         elif status == "timeout":
             mark = "⏳"
         else:
             mark = "❌"
-        lines.append(f"{qid} : {letter} {mark}")
+
+        lines.append(f"{qid} : {choice_letter} {mark}")
     return "\n".join(lines) if lines else "-"
 
-
-# ============================================================================
-#  NOTION API
-# ============================================================================
-
-NOTION_BASE_URL = "https://api.notion.com/v1"
-NOTION_HEADERS = {
-    "Authorization": f"Bearer {NOTION_API_KEY}",
-    "Notion-Version": "2022-06-28",
-    "Content-Type": "application/json",
-}
-
-
-def notion_query(database_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    url = f"{NOTION_BASE_URL}/databases/{database_id}/query"
-    resp = requests.post(url, headers=NOTION_HEADERS, json=payload, timeout=20)
-    if not resp.ok:
-        logger.error("Erreur Notion (query) %s : %s", resp.status_code,
-                     resp.text)
-        resp.raise_for_status()
-    return resp.json()
-
-
-def notion_create_page(database_id: str, properties: Dict[str, Any]) -> str:
-    url = f"{NOTION_BASE_URL}/pages"
-    payload = {
-        "parent": {
-            "database_id": database_id
-        },
-        "properties": properties
-    }
-    resp = requests.post(url, headers=NOTION_HEADERS, json=payload, timeout=20)
-    if not resp.ok:
-        logger.error("Erreur Notion (create) %s : %s", resp.status_code,
-                     resp.text)
-        resp.raise_for_status()
-    return resp.json().get("id")
-
-
-def notion_update_page(page_id: str, properties: Dict[str, Any]) -> None:
-    url = f"{NOTION_BASE_URL}/pages/{page_id}"
-    payload = {"properties": properties}
-    resp = requests.patch(url,
-                          headers=NOTION_HEADERS,
-                          json=payload,
-                          timeout=20)
-    if not resp.ok:
-        logger.error("Erreur Notion (update) %s : %s", resp.status_code,
-                     resp.text)
-        resp.raise_for_status()
-
-
-def has_already_taken_exam(joueur_id: str, mode: str = "Prod") -> bool:
-    try:
-        payload = {
-            "filter": {
-                "and": [
-                    {
-                        "property": NOTION_FIELDS["joueur_id"],
-                        "title": {
-                            "equals": joueur_id
-                        }
-                    },
-                    {
-                        "property": NOTION_FIELDS["mode"],
-                        "select": {
-                            "equals": mode
-                        }
-                    },
-                ]
-            },
-            "page_size": 1,
-        }
-        data = notion_query(NOTION_EXAMS_DB_ID, payload)
-        return len(data.get("results", [])) > 0
-    except Exception as e:
-        logger.error("has_already_taken_exam — échec : %s", e)
-        return False
-
-
-def compute_statut(score: int, total_questions: int, mode: str) -> str:
-    # Si on ne connaît pas le total (ex: feedback seul), on évite un statut arbitraire.
-    if total_questions <= 0:
-        return "En cours"
-    if mode != "Prod":
-        return "En cours"
-    seuil = max(1, int(round(total_questions *
-                             0.75))) if total_questions > 0 else 12
-    return "Admis" if score >= seuil else "Refusé"
-
-
-def create_exam_in_notion(
-    joueur_id: str,
-    mode: str,
-    score: int,
-    total_questions: int,
-    total_time_s: int,
-    time_mmss: str,
-    answers_pretty: str,
-    commentaires: str,
-    profil_joueur: str,
-    nom_utilisateur: str,
-    username_telegram: str,
-    version_bot: str) -> Optional[str]:
-    now = datetime.now(timezone.utc).isoformat()
-    statut_value = compute_statut(score, total_questions, mode)
-
-    properties: Dict[str, Any] = {
-        NOTION_FIELDS["joueur_id"]: {
-            "title": [{
-                "type": "text",
-                "text": {
-                    "content": joueur_id
-                }
-            }]
-        },
-        NOTION_FIELDS["mode"]: {
-            "select": {
-                "name": mode
-            }
-        },
-        NOTION_FIELDS["score"]: {
-            "number": int(score)
-        },
-        NOTION_FIELDS["statut"]: {
-            "select": {
-                "name": statut_value
-            }
-        },
-        NOTION_FIELDS["date"]: {
-            "date": {
-                "start": now
-            }
-        },
-        NOTION_FIELDS["time_s"]: {
-            "number": int(total_time_s)
-        },
-        NOTION_FIELDS["time_mmss"]: {
-            "rich_text": [{
-                "type": "text",
-                "text": {
-                    "content": time_mmss
-                }
-            }]
-        },
-        NOTION_FIELDS["reponses"]: {
-            "rich_text": [{
-                "type": "text",
-                "text": {
-                    "content": (answers_pretty or "-")[:1900]
-                }
-            }]
-        },
-        NOTION_FIELDS["commentaires"]: {
-            "rich_text": [{
-                "type": "text",
-                "text": {
-                    "content": (commentaires or "-")[:1900]
-                }
-            }]
-        },
-        NOTION_FIELDS["version_bot"]: {
-            "rich_text": [{
-                "type": "text",
-                "text": {
-                    "content": (version_bot or BOT_VERSION)[:1900]
-                }
-            }]
-        },
-        NOTION_FIELDS["nom_utilisateur"]: {
-            "rich_text": [{
-                "type": "text",
-                "text": {
-                    "content": (nom_utilisateur or "-")[:1900]
-                }
-            }]
-        },
-        NOTION_FIELDS["username_telegram"]: {
-            "rich_text": [{
-                "type": "text",
-                "text": {
-                    "content": (username_telegram or "-")[:1900]
-                }
-            }]
-        },
-        NOTION_FIELDS["profil_joueur"]: {
-            "select": {
-                "name": profil_joueur
-            }
-        },
-    }
+def write_to_notion(payload):
+    """Write ritual completion data to Notion"""
+    if not NOTION_API_KEY or not NOTION_EXAMS_DB_ID:
+        print("⚠️ Notion API key or DB ID not configured")
+        return {"ok": False, "error": "notion_not_configured"}
 
     try:
-        page_id = notion_create_page(NOTION_EXAMS_DB_ID, properties)
-        logger.info("✅ Notion page créée=%s | time=%s (%s)", page_id,
-                    total_time_s, time_mmss)
-        return page_id
-    except Exception as e:
-        logger.error("❌ Erreur création Notion : %s", e)
-        return None
+        # Extract data from payload
+        score = payload.get("score") or 0
+        total = payload.get("total") or 15
+        time_seconds = payload.get("time_total_seconds") or payload.get("time_spent_seconds") or 0
+        time_formatted = payload.get("time_formatted") or format_time_mmss(time_seconds)
+        answers = payload.get("answers") or []
+        comment = payload.get("comment_text") or payload.get("feedback_text") or "-"
+        telegram_user_id = str(payload.get("telegram_user_id") or payload.get("user_id") or "unknown")
 
+        # Compute profile and status
+        profil = compute_player_profile(score, total, time_seconds)
+        statut = compute_statut(score, total, "Prod")
+        answers_text = format_answers_pretty(answers)
 
-def get_last_exam_page_for_player(joueur_id: str) -> Optional[str]:
-    try:
-        payload = {
-            "filter": {
-                "property": NOTION_FIELDS["joueur_id"],
-                "title": {
-                    "equals": joueur_id
-                }
-            },
-            "sorts": [{
-                "property": NOTION_FIELDS["date"],
-                "direction": "descending"
-            }],
-            "page_size":
-            1,
-        }
-        data = notion_query(NOTION_EXAMS_DB_ID, payload)
-        results = data.get("results", [])
-        return results[0]["id"] if results else None
-    except Exception as e:
-        logger.error("Erreur recherche dernière page : %s", e)
-        return None
+        now = datetime.now(timezone.utc).isoformat()
 
-
-def update_exam_feedback(page_id: str, feedback: str) -> bool:
-    try:
         properties = {
+            NOTION_FIELDS["joueur_id"]: {
+                "title": [{
+                    "type": "text",
+                    "text": {"content": telegram_user_id}
+                }]
+            },
+            NOTION_FIELDS["mode"]: {
+                "select": {"name": "Prod"}
+            },
+            NOTION_FIELDS["score"]: {
+                "number": int(score)
+            },
+            NOTION_FIELDS["statut"]: {
+                "select": {"name": statut}
+            },
+            NOTION_FIELDS["date"]: {
+                "date": {"start": now}
+            },
+            NOTION_FIELDS["time_s"]: {
+                "number": int(time_seconds)
+            },
+            NOTION_FIELDS["time_mmss"]: {
+                "rich_text": [{
+                    "type": "text",
+                    "text": {"content": time_formatted}
+                }]
+            },
+            NOTION_FIELDS["reponses"]: {
+                "rich_text": [{
+                    "type": "text",
+                    "text": {"content": (answers_text or "-")[:1900]}
+                }]
+            },
             NOTION_FIELDS["commentaires"]: {
                 "rich_text": [{
                     "type": "text",
-                    "text": {
-                        "content": (feedback or "-")[:1900]
-                    }
+                    "text": {"content": (comment or "-")[:1900]}
                 }]
-            }
+            },
+            NOTION_FIELDS["version_bot"]: {
+                "rich_text": [{
+                    "type": "text",
+                    "text": {"content": "rituel_full_v1_http"}
+                }]
+            },
+            NOTION_FIELDS["profil_joueur"]: {
+                "select": {"name": profil}
+            },
+            NOTION_FIELDS["nom_utilisateur"]: {
+                "rich_text": [{
+                    "type": "text",
+                    "text": {"content": "-"}
+                }]
+            },
+            NOTION_FIELDS["username_telegram"]: {
+                "rich_text": [{
+                    "type": "text",
+                    "text": {"content": "-"}
+                }]
+            },
         }
-        notion_update_page(page_id, properties)
-        return True
-    except Exception as e:
-        logger.error("❌ Erreur update feedback : %s", e)
-        return False
 
+        url = f"{NOTION_BASE_URL}/pages"
+        notion_payload = {
+            "parent": {"database_id": NOTION_EXAMS_DB_ID},
+            "properties": properties
+        }
 
-# ============================================================================
-#  TELEGRAM — COMMANDES
-# ============================================================================
+        headers = get_notion_headers()
+        resp = requests.post(url, headers=headers, json=notion_payload, timeout=20)
 
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    msg = update.effective_message
-    if not user or not msg:
-        return
-
-    # Prevent rapid double-tap (Telegram sometimes sends /start twice)
-    now = time.time()
-    last_start = context.user_data.get("last_start_time", 0)
-    if now - last_start < 2:  # Less than 2 seconds
-        logger.info("⚠️ Ignoring rapid duplicate /start (%.1fs apart)", now - last_start)
-        return
-    context.user_data["last_start_time"] = now
-
-    joueur_id = str(user.id)
-    admin = is_admin(joueur_id)
-    context.user_data["exam_mode"] = "Prod"
-
-    # ✅ retire l'ancien clavier
-    await msg.reply_text("⟡", reply_markup=ReplyKeyboardRemove())
-
-    if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
-        await msg.reply_text(
-            "🕯️ Tu as déjà franchi l'épreuve officielle, une seule fois suffit."
-        )
-        return
-
-    # ✅ cache-buster réel
-    v = int(time.time())
-    webapp_url = (
-        "https://oracle--Velvet-elite.replit.app/webapp/"
-        f"?api=https://oracle--Velvet-elite.replit.app&v={v}")
-    logger.info("🔗 WEBAPP_URL_SENT=%s", webapp_url)
-
-    # ✅ iOS/viewport: définir aussi le bouton Menu du chat vers la WebApp.
-    # Sur certains clients iOS, l'ouverture via le Menu est plus fiable en hauteur.
-    try:
-        await context.bot.set_chat_menu_button(
-            chat_id=msg.chat_id,
-            menu_button=MenuButtonWebApp(text="Velvet Oracle", web_app=WebAppInfo(url=webapp_url)))
-        logger.info("✅ CHAT_MENU_BUTTON_WEBAPP_SET chat_id=%s", msg.chat_id)
-    except Exception as e:
-        logger.warning("⚠️ set_chat_menu_button failed: %s", e)
-
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton(text="Lancer le Rituel Velvet Oracle",
-                             web_app=WebAppInfo(url=webapp_url))
-    ]])
-    await msg.reply_text("🕯️ Lorsque tu es prêt, touche le bouton ci-dessous.",
-                         reply_markup=keyboard)
-
-
-async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    msg = update.effective_message
-    if not user or not msg:
-        return
-    username = f"@{user.username}" if user.username else "—"
-    await msg.reply_text(
-        f"ID={user.id}\nNom={user.first_name or ''} {user.last_name or ''}\nUsername={username}"
-    )
-
-
-# ============================================================================
-#  TELEGRAM — WEBAPP DATA (FIX CANON)
-# ============================================================================
-
-
-async def handle_any_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Fallback: if a message carries web_app_data, route it to the WebApp handler."""
-    msg = update.effective_message
-    try:
-        if msg and getattr(msg, "web_app_data", None):
-            logger.info("🟣 WEBAPP_DATA_FALLBACK — routing to handle_webapp_data")
-            return await handle_webapp_data(update, context)
-    except Exception:
-        logger.exception("WEBAPP_DATA_FALLBACK_FAILED")
-    return
-
-async def handle_webapp_data(update: Update,
-                             context: ContextTypes.DEFAULT_TYPE) -> None:
-    msg = update.effective_message
-    user = update.effective_user
-    if not msg or not user or not getattr(msg, "web_app_data", None):
-        return
-
-    joueur_id = str(user.id)
-    exam_mode_value = context.user_data.get("exam_mode", "Prod")
-
-    full_name = (
-        f"{user.first_name or ''} {user.last_name or ''}").strip() or "-"
-    username = f"@{user.username}" if user.username else "-"
-
-    raw = msg.web_app_data.data
-    logger.info("🟣 WEBAPP_DATA_RX len=%s raw(first200)=%r", len(raw or ""),
-                (raw or "")[:200])
-
-    try:
-        payload = json.loads(raw)
-        if not isinstance(payload, dict):
-            payload = {"raw": raw, "parsed_type": str(type(payload))}
-    except Exception:
-        payload = {"raw": raw}
-
-    payload_mode = (_first_str(payload, ["mode", "type"]) or "").strip()
-    # Fallback : certains builds n'envoient pas de champ mode/type sur le dernier bouton.
-    if not payload_mode:
-        if any(k in payload
-               for k in ("score", "answers", "total", "time_total_seconds",
-                         "time_spent_seconds")):
-            payload_mode = "rituel_full_v1"
-        elif any(k in payload for k in ("feedback_text", "commentaires",
-                                        "feedback", "text")):
-            payload_mode = "rituel_feedback_v1"
+        if resp.status_code < 300:
+            print(f"✅ Notion page created: {resp.json().get('id')}")
+            return {"ok": True, "page_id": resp.json().get("id")}
         else:
-            payload_mode = "unknown"
-    logger.info("📩 WEBAPP_DATA mode=%s keys=%s", payload_mode,
-                list(payload.keys()))
+            print(f"❌ Notion error {resp.status_code}: {resp.text[:500]}")
+            return {"ok": False, "error": resp.text[:500]}
 
-    # compat
-    if payload_mode in ("ritual_full_v1", "ritual_v1"):
-        payload_mode = payload_mode.replace("ritual_", "rituel_")
-
-    # 1) RITUEL (création page)
-    if payload_mode in ("rituel_full_v1", "rituel_v1"):
-        score = _first_int(payload, ["score"]) or 0
-        total = _first_int(payload, ["total"]) or 15
-
-        total_time_s = _first_int(
-            payload,
-            [
-                "time_total_seconds", "time_spent_seconds",
-                "total_time_seconds", "duration_seconds"
-            ])
-        if total_time_s is None:
-            total_time_s = 0
-
-        time_mmss = _first_str(
-            payload, ["time_formatted"]) or format_time_mmss(total_time_s)
-
-        answers = payload.get("answers") or []
-        if not isinstance(answers, list):
-            answers = []
-        answers_pretty = format_answers_pretty(answers)
-
-        profil = compute_player_profile(score, total, total_time_s)
-
-        commentaires = _first_str(
-            payload,
-            ["feedback_text", "commentaires", "commentaire", "message"]) or "-"
-
-        page_id = create_exam_in_notion(
-            joueur_id=joueur_id,
-            mode=exam_mode_value,
-            score=score,
-            total_questions=total,
-            total_time_s=total_time_s,
-            time_mmss=time_mmss,
-            answers_pretty=answers_pretty,
-            commentaires=commentaires,
-            profil_joueur=profil,
-            nom_utilisateur=full_name,
-            username_telegram=username,
-            version_bot=payload_mode)
-
-        await msg.reply_text("🕯️ Payload reçu. Trace inscrite." if page_id else
-                             "❌ Payload reçu, mais Notion a refusé.")
-        return
-
-    # 2) FEEDBACK (update dernière page)
-    if payload_mode in ("rituel_feedback_v1", "feedback", "rituel_feedback"):
-        feedback_text = (_first_str(
-            payload, ["feedback_text", "commentaires", "feedback", "text"])
-                         or "-").strip() or "-"
-
-        page_id = get_last_exam_page_for_player(joueur_id)
-        if not page_id:
-            # Aucun rituel trouvé : on crée une trace minimale (statut=En cours via compute_statut total_questions<=0)
-            created = create_exam_in_notion(
-                joueur_id=joueur_id,
-                mode=exam_mode_value,
-                score=0,
-                total_questions=0,
-                total_time_s=0,
-                time_mmss="00:00",
-                answers_pretty="-",
-                commentaires=feedback_text,
-                profil_joueur="Oracle en Devenir",
-                nom_utilisateur=full_name,
-                username_telegram=username,
-                version_bot="rituel_feedback_v1")
-            await msg.reply_text("🕯️ Feedback noté." if created else
-                                 "❌ Feedback reçu, mais Notion a refusé.")
-            return
-
-        ok = update_exam_feedback(page_id, feedback_text)
-        await msg.reply_text("🕯️ Feedback noté." if ok else
-                             "❌ Feedback reçu, mais Notion a refusé.")
-        return
-
-    await msg.reply_text("Payload reçu mais mode inconnu.")
-    logger.warning("Mode inconnu: %s", payload_mode)
-
-
-# ============================================================================
-#  FLASK BACKEND (UNIFIÉ)
-# ============================================================================
-
-app = server.app
-
-
-def run_flask():
-    port = int(os.getenv("PORT", "5000"))
-    logger.info("🔵 FLASK STARTING on 0.0.0.0:%s", port)
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
-    logger.info("🔴 FLASK STOPPED")
-
-
-# ============================================================================
-#  DEBUG (anti-hallucination : preuve d'updates)
-# ============================================================================
-
-
-async def debug_any_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        d = update.to_dict()
-        logger.info("🧪 UPDATE_RX keys=%s", list(d.keys()))
-        m = getattr(update, "message", None)
-        if m:
-            wad = getattr(m, "web_app_data", None)
-            logger.info("🧪 MSG_RX text=%r has_web_app_data=%s", m.text,
-                        bool(wad))
-            if wad:
-                logger.info("🧪 WEBAPP_DATA_RX len=%s",
-                            len(getattr(wad, "data", "") or ""))
     except Exception as e:
-        logger.exception("🧪 debug_any_update error: %s", e)
+        print(f"❌ Exception writing to Notion: {e}")
+        return {"ok": False, "error": str(e)}
 
 
-# ============================================================================
-#  MAIN
-# ============================================================================
+# -----------------------------------------------------
+# CORS minimal (front local)
+# -----------------------------------------------------
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers[
+        "Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Telegram-InitData"
+    return response
 
 
-async def main():
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+# -----------------------------------------------------
+# Routes de base
+# -----------------------------------------------------
+@app.get("/")
+def root():
+    return jsonify({
+        "service": "velvet-mcp-core",
+        "status": "ok",
+        "version": APP_VERSION,
+    }), 200
 
-    # Commandes
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("whoami", whoami))
-    
-    # WebApp data handler - ONLY for web_app_data messages
-    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
 
-    # Debug global
-    application.add_handler(TypeHandler(Update, debug_any_update), group=-1)
-    async with application:
-        await application.start()
-        logger.info("🕯️ Bot lancé.")
-        logger.info("🧪 BEFORE_START_POLLING")
+@app.get("/webapp/")
+def webapp_index():
+    """Serve the Telegram WebApp"""
+    return send_from_directory('webapp', 'index.html')
 
-        await application.updater.start_polling()
-        logger.info("🧪 AFTER_START_POLLING")
 
+@app.get("/version")
+def version():
+    return jsonify({"version": APP_VERSION}), 200
+
+
+
+
+@app.get("/whoami")
+def whoami():
+    # Diagnostic endpoint: proves which code+env the published service is actually running
+    return jsonify({
+        "ok": True,
+        "version": APP_VERSION,
+        "version_tag": VERSION_TAG,
+        "env": os.getenv("ENV", "unset"),
+        "airtable_api_key_prefix": (os.getenv("AIRTABLE_API_KEY", "") or os.getenv("AIRTABLE_KEY", ""))[:6],
+        "airtable_base_id_questions": os.getenv("AIRTABLE_BASE_ID", "unset"),
+        "airtable_base_id_core": os.getenv("AIRTABLE_CORE_BASE_ID", "unset"),
+        "airtable_questions_table": os.getenv("AIRTABLE_TABLE_ID", "unset"),
+        "airtable_players_table": os.getenv("AIRTABLE_PLAYERS_TABLE", "unset"),
+        "airtable_attempts_table": os.getenv("AIRTABLE_ATTEMPTS_TABLE", "unset"),
+        "airtable_payloads_table": os.getenv("AIRTABLE_PAYLOADS_TABLE", "unset"),
+        "airtable_answers_table": os.getenv("AIRTABLE_ANSWERS_TABLE", "unset"),
+        "airtable_feedback_table": os.getenv("AIRTABLE_FEEDBACK_TABLE", "unset"),
+        "notion_api_key_prefix": (os.getenv("NOTION_API_KEY", ""))[:6],
+        "notion_exams_db_id": os.getenv("NOTION_EXAMS_DB_ID", "unset"),
+        "utc": datetime.now(timezone.utc).isoformat(),
+    }), 200
+@app.get("/health")
+def health():
+    air_ok = False
+    air_error = None
+
+    api_key = os.getenv("AIRTABLE_API_KEY", "")
+    base_id = os.getenv("AIRTABLE_BASE_ID", "")
+    table_id = os.getenv("AIRTABLE_TABLE_ID", "")
+
+    if api_key and base_id and table_id:
         try:
-            while True:
-                await asyncio.sleep(3600)
-        finally:
-            await application.updater.stop()
-            await application.stop()
+            url = f"https://api.airtable.com/v0/{base_id}/{table_id}?maxRecords=1"
+            r = requests.get(
+                url,
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=10,
+            )
+            air_ok = (r.status_code == 200)
+            if not air_ok:
+                air_error = f"{r.status_code}: {r.text[:200]}"
+        except Exception as e:
+            air_error = str(e)
+    else:
+        air_error = "missing_env"
+
+    return jsonify({
+        "status": "ok",
+        "version": APP_VERSION,
+        "utc": datetime.now(timezone.utc).isoformat(),
+        "method": request.method,
+        "airtable": {
+            "ok": air_ok,
+            "error": air_error,
+        },
+    }), 200
+
+
+# -----------------------------------------------------
+# Questions — tirage aléatoire + mapping propre
+# -----------------------------------------------------
+@app.route("/questions/random", methods=["GET", "OPTIONS"])
+def questions_random():
+    # Preflight CORS (au cas où)
+    if request.method == "OPTIONS":
+        return "", 204
+
+    try:
+        count = int(request.args.get("count", "15"))
+    except ValueError:
+        count = 15
+
+    count = max(1, min(50, count))
+
+    api_key = os.getenv("AIRTABLE_API_KEY")
+    base_id = os.getenv("AIRTABLE_BASE_ID")
+    table_id = os.getenv("AIRTABLE_TABLE_ID")
+
+    if not (api_key and base_id and table_id):
+        return jsonify({"error": "missing_env"}), 500
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    base_url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
+
+    threshold = random.randint(0, 999_999)
+
+    def fetch_chunk(formula: str):
+        params = {
+            "maxRecords": count,
+            "filterByFormula": formula,
+            "sort[0][field]": "Rand",
+            "sort[0][direction]": "asc",
+        }
+        rr = requests.get(base_url, headers=headers, params=params, timeout=10)
+        if rr.status_code != 200:
+            return rr, []
+        return rr, rr.json().get("records", [])
+
+    r1, recs = fetch_chunk(f"{{Rand}}>={threshold}")
+
+    if r1.status_code == 200 and len(recs) < count:
+        r2, recs2 = fetch_chunk(f"{{Rand}}<{threshold}")
+        recs = recs + recs2
+
+    if r1.status_code != 200:
+        return jsonify({
+            "error": "airtable_http_error",
+            "status_code": r1.status_code,
+            "detail": r1.text[:500],
+        }), 502
+
+    records = recs[:count]
+
+    mapped = []
+    for rec in records:
+        f = rec.get("fields", {})
+
+        raw_opts = f.get("Options (JSON)", "[]")
+        try:
+            opts = json.loads(raw_opts) if isinstance(
+                raw_opts, str) else (raw_opts or [])
+        except Exception:
+            opts = []
+
+        mapped.append({
+            "id": f.get("ID_question"),
+            "question": f.get("Question"),
+            "options": opts,
+            "correct_index": f.get("Correct_index"),
+            "explanation": f.get("Explication"),
+            "domaine": f.get("Domaine"),
+            "niveau": f.get("Niveau"),
+        })
+
+    return jsonify({
+        "count": count,
+        "questions": mapped,
+    }), 200
+
+
+# -----------------------------------------------------
+# Errors
+# -----------------------------------------------------
+@app.errorhandler(404)
+def not_found(_):
+    return jsonify({"error": "not_found"}), 404
+
+
+@app.errorhandler(500)
+def server_error(_):
+    return jsonify({"error": "internal_server_error"}), 500
+
+
+# -----------------------------------------------------
+# Entrypoint local
+# -----------------------------------------------------
+
+# ================================================================
+# Ritual endpoints (WebApp → Airtable)
+# ================================================================
+from flask import abort
+
+
+def _json():
+    try:
+        return request.get_json(force=True, silent=False) or {}
+    except Exception:
+        return {}
+
+
+def _airtable_headers():
+    key = os.getenv("AIRTABLE_API_KEY") or os.getenv("AIRTABLE_KEY")
+    if not key:
+        return None
+    return {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json"
+    }
+
+
+def _airtable_base_id(table_name=""):
+    # Si c'est une table de questions, utiliser AIRTABLE_BASE_ID
+    # Sinon utiliser AIRTABLE_CORE_BASE_ID pour players/attempts/etc
+    questions_table = os.getenv("AIRTABLE_TABLE_ID", "")
+
+    # Liste des tables qui vont dans CORE (players/attempts/etc)
+    core_tables = [
+        "players",
+        "rituel_attempts", 
+        "rituel_webapp_payloads",
+        "rituel_answers",
+        "rituel_feedback",
+        os.getenv("AIRTABLE_PLAYERS_TABLE", ""),
+        os.getenv("AIRTABLE_ATTEMPTS_TABLE", ""),
+        os.getenv("AIRTABLE_PAYLOADS_TABLE", ""),
+        os.getenv("AIRTABLE_ANSWERS_TABLE", ""),
+        os.getenv("AIRTABLE_FEEDBACK_TABLE", ""),
+    ]
+
+    # Si c'est la table de questions -> base QUESTIONS
+    if table_name == questions_table:
+        return os.getenv("AIRTABLE_BASE_ID")
+
+    # Si c'est une table de joueurs/tentatives -> base CORE
+    if table_name in core_tables:
+        core_base = os.getenv("AIRTABLE_CORE_BASE_ID")
+        if core_base:
+            return core_base
+
+    # Fallback sur base questions (ancien comportement)
+    return os.getenv("AIRTABLE_BASE_ID")
+
+
+def _airtable_url(table):
+    base = _airtable_base_id(table)
+    return f"https://api.airtable.com/v0/{base}/{table}"
+
+
+def airtable_create(table, fields):
+    headers = _airtable_headers()
+    base = _airtable_base_id(table)
+    if not headers or not base:
+        return {"ok": False, "error": "missing_airtable_env"}
+    r = requests.post(_airtable_url(table),
+                      headers=headers,
+                      json={"fields": fields},
+                      timeout=20)
+    try:
+        data = r.json()
+    except Exception:
+        data = {"raw": r.text}
+    return {"ok": r.status_code < 300, "status": r.status_code, "data": data}
+
+
+def airtable_find_one(table, formula):
+    headers = _airtable_headers()
+    base = _airtable_base_id(table)
+    if not headers or not base:
+        return {"ok": False, "error": "missing_airtable_env"}
+    r = requests.get(_airtable_url(table),
+                     headers=headers,
+                     params={
+                         "filterByFormula": formula,
+                         "maxRecords": 1
+                     },
+                     timeout=20)
+    data = r.json()
+    recs = data.get("records", []) if isinstance(data, dict) else []
+    return {
+        "ok": r.status_code < 300,
+        "status": r.status_code,
+        "record": (recs[0] if recs else None),
+        "data": data
+    }
+
+
+def airtable_update(table, record_id, fields):
+    headers = _airtable_headers()
+    base = _airtable_base_id(table)
+    if not headers or not base:
+        return {"ok": False, "error": "missing_airtable_env"}
+    r = requests.patch(_airtable_url(table) + f"/{record_id}",
+                       headers=headers,
+                       json={"fields": fields},
+                       timeout=20)
+    data = r.json()
+    return {"ok": r.status_code < 300, "status": r.status_code, "data": data}
+
+
+def upsert_player_by_telegram_user_id(players_table, telegram_user_id):
+    # players.telegram_user_id is the upsert key (locked mapping)
+    formula = f"{{telegram_user_id}}='{telegram_user_id}'"
+    found = airtable_find_one(players_table, formula)
+    if found.get("ok") and found.get("record"):
+        return {
+            "ok": True,
+            "action": "found",
+            "record_id": found["record"]["id"]
+        }
+    # create minimal
+    created = airtable_create(players_table,
+                              {"telegram_user_id": str(telegram_user_id)})
+    if created.get("ok"):
+        return {
+            "ok": True,
+            "action": "created",
+            "record_id": created["data"]["id"]
+        }
+    return {"ok": False, "error": created}
+
+
+@app.get("/__routes")
+def __routes():
+    return jsonify({
+        "ok": True,
+        "version": APP_VERSION,
+        "routes": sorted([str(r) for r in app.url_map.iter_rules()])
+    })
+
+
+@app.route("/ritual/start", methods=["POST", "OPTIONS"])
+def ritual_start():
+    if request.method == "OPTIONS":
+        return ("", 204)
+
+    try:
+        print("🔵 DEBUG /ritual/start appelé")
+
+        payload = _json()
+        telegram_user_id = payload.get("telegram_user_id") or payload.get(
+            "user_id") or payload.get("tg_user_id")
+        print(f"🔵 telegram_user_id = {telegram_user_id}")
+
+        if not telegram_user_id:
+            return jsonify({"ok": False, "error": "missing_telegram_user_id"}), 400
+
+        players_table = os.getenv("AIRTABLE_PLAYERS_TABLE") or "players"
+        attempts_table = os.getenv("AIRTABLE_ATTEMPTS_TABLE") or "rituel_attempts"
+        print(
+            f"🔵 players_table = {players_table}, attempts_table = {attempts_table}", flush=True
+        )
+        print(f"🔵 payload complet = {payload}", flush=True)
+
+        p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
+        if not p.get("ok"):
+            return jsonify({
+                "ok": False,
+                "error": "player_upsert_failed",
+                "details": p
+            }), 500
+
+        # Translate mode for Airtable (app.js sends "rituel_full_v1" but Airtable expects "PROD" or "TEST")
+        raw_mode = payload.get("mode") or payload.get("env") or "PROD"
+        if raw_mode in ("rituel_full_v1", "ritual_full_v1", "rituel_v1", "ritual_v1"):
+            airtable_mode = "PROD"
+        elif raw_mode == "TEST":
+            airtable_mode = "TEST"
+        else:
+            airtable_mode = "PROD"  # fallback
+
+        print(f"🔵 Mode translation: {raw_mode} → {airtable_mode}", flush=True)
+
+        # Create attempt (write only whitelisted raw fields; never computed/system fields)
+        fields = {
+            "player": [p["record_id"]],
+            "started_at":
+            payload.get("started_at") or datetime.now(timezone.utc).isoformat(),
+            "mode": airtable_mode,
+            "status":
+            payload.get("status") or "STARTED",
+            "status_technique": "INIT",  # Champ obligatoire pour Airtable
+        }
+        # optional text mirror if you have one; safe to ignore if field absent
+        if payload.get("Players"):
+            fields["Players"] = payload.get("Players")
+
+        print(f"🔵 DEBUG - Player record_id créé: {p['record_id']}")
+        print(f"🔵 DEBUG - Tentative création attempt avec fields: {json.dumps(fields, indent=2)}")
+
+        created = airtable_create(attempts_table, fields)
+
+        print(f"🔵 DEBUG - Réponse airtable_create: {json.dumps(created, indent=2)}")
+
+        if not created.get("ok"):
+            print(f"🔴 ERREUR AIRTABLE COMPLÈTE:")
+            print(f"🔴 Status Code: {created.get('status')}")
+            print(f"🔴 Data: {json.dumps(created.get('data'), indent=2)}")
+            print(f"🔴 Fields envoyés: {json.dumps(fields, indent=2)}")
+            return jsonify({
+                "ok": False,
+                "error": "attempt_create_failed",
+                "details": created,
+                "fields_sent": fields,
+                "airtable_response": created.get("data")
+            }), 500
+
+        return jsonify({
+            "ok": True,
+            "version": APP_VERSION,
+            "attempt_id": created["data"]["id"],
+            "player_record_id": p["record_id"],
+        })
+
+    except Exception as e:
+        print(f"🔴 EXCEPTION DANS /ritual/start: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "ok": False,
+            "error": "internal_server_error",
+            "message": str(e)
+        }), 500
+
+
+@app.route("/ritual/complete", methods=["POST", "OPTIONS"])
+def ritual_complete():
+    if request.method == "OPTIONS":
+        return ("", 204)
+
+    payload = _json()
+    telegram_user_id = payload.get("telegram_user_id") or payload.get(
+        "user_id") or payload.get("tg_user_id")
+    attempt_record_id = payload.get("attempt_record_id") or payload.get(
+        "exam_record_id") or payload.get("attempt_id")
+
+    if not telegram_user_id:
+        return jsonify({"ok": False, "error": "missing_telegram_user_id"}), 400
+
+    players_table = os.getenv("AIRTABLE_PLAYERS_TABLE", "players")
+    attempts_table = os.getenv("AIRTABLE_ATTEMPTS_TABLE", "rituel_attempts")
+    payloads_table = os.getenv("AIRTABLE_PAYLOADS_TABLE",
+                               "rituel_webapp_payloads")
+    answers_table = os.getenv("AIRTABLE_ANSWERS_TABLE", "rituel_answers")
+    feedback_table = os.getenv("AIRTABLE_FEEDBACK_TABLE", "rituel_feedback")
+
+    p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
+    if not p.get("ok"):
+        return jsonify({
+            "ok": False,
+            "error": "player_upsert_failed",
+            "details": p
+        }), 500
+
+    # 1) Log raw payload (always)
+    raw_fields = {
+        "telegram_user_id": str(telegram_user_id),
+        "payload": json.dumps(payload, ensure_ascii=False)[:98000],
+        "utc": datetime.now(timezone.utc).isoformat(),
+    }
+    raw_res = airtable_create(payloads_table, raw_fields)
+
+    # 2) Update attempt if we have its record id
+    attempt_update = None
+    if attempt_record_id:
+        upd = {
+            "completed_at":
+            payload.get("completed_at")
+            or datetime.now(timezone.utc).isoformat(),
+            "status":
+            payload.get("status") or "COMPLETED",
+        }
+        # scoring fields (only if provided)
+        for k_src, k_dst in [
+            ("score_raw", "score_raw"),
+            ("score_max", "score_max"),
+            ("time_total_seconds", "time_total_seconds"),
+            ("result", "result"),
+        ]:
+            if payload.get(k_src) is not None:
+                upd[k_dst] = payload.get(k_src)
+
+        # Translate mode for Airtable
+        if payload.get("mode") is not None:
+            raw_mode = payload.get("mode")
+            if raw_mode in ("rituel_full_v1", "ritual_full_v1", "rituel_v1", "ritual_v1"):
+                upd["mode"] = "PROD"
+            elif raw_mode == "TEST":
+                upd["mode"] = "TEST"
+            else:
+                upd["mode"] = "PROD"
+
+        attempt_update = airtable_update(attempts_table,
+                                         str(attempt_record_id), upd)
+
+    # 3) Insert answers (if provided) — tolerant schema
+    answers = payload.get("answers") or payload.get("rituel_answers") or []
+    answers_inserted = 0
+    if isinstance(answers, list) and attempt_record_id:
+        for a in answers[:200]:
+            if not isinstance(a, dict):
+                continue
+            fields = {
+                "player": [p["record_id"]],
+                "exam": [str(attempt_record_id)],
+                "utc": datetime.now(timezone.utc).isoformat(),
+            }
+            # common answer fields
+            for k in [
+                    "question_id", "ID_question", "selected_index",
+                    "correct_index", "is_correct", "time_ms", "time_seconds"
+            ]:
+                if a.get(k) is not None:
+                    fields[k] = a.get(k)
+            res = airtable_create(answers_table, fields)
+            if res.get("ok"):
+                answers_inserted += 1
+
+    # 4) Insert feedback (if provided)
+    fb = payload.get("feedback") or payload.get("rituel_feedback")
+    feedback_res = None
+    if attempt_record_id and fb:
+        fields = {
+            "player": [p["record_id"]],
+            "exam": [str(attempt_record_id)],
+            "utc": datetime.now(timezone.utc).isoformat(),
+        }
+        if isinstance(fb, dict):
+            if fb.get("text"):
+                fields["text"] = fb["text"]
+            if fb.get("rating") is not None:
+                fields["rating"] = fb["rating"]
+        else:
+            fields["text"] = str(fb)
+        feedback_res = airtable_create(feedback_table, fields)
+
+    # 5) ✅ WRITE TO NOTION (new!)
+    notion_res = None
+    try:
+        notion_res = write_to_notion(payload)
+        if notion_res.get("ok"):
+            print(f"✅ NOTION WRITE SUCCESS: page_id={notion_res.get('page_id')}")
+        else:
+            print(f"⚠️ NOTION WRITE FAILED: {notion_res.get('error')}")
+    except Exception as e:
+        print(f"❌ NOTION WRITE EXCEPTION: {e}")
+
+    return jsonify({
+        "ok":
+        True,
+        "version":
+        APP_VERSION,
+        "payload_logged":
+        raw_res.get("ok", False),
+        "payload_record": (raw_res.get("data", {}) or {}).get("id"),
+        "attempt_updated":
+        (attempt_update or {}).get("ok") if attempt_update else None,
+        "answers_inserted":
+        answers_inserted,
+        "feedback_logged":
+        feedback_res.get("ok") if feedback_res else None,
+        "notion_written":
+        notion_res.get("ok") if notion_res else False,
+    })
 
 
 if __name__ == "__main__":
-    # Token present → run both: Flask API + Telegram bot
-    flask_thread = threading.Thread(target=run_flask, daemon=False)
-    flask_thread.start()
+    # -----------------------------------------------------
+    # Entrypoint local (DEV ONLY)
+    # -----------------------------------------------------
+    # En environnement Publish/WSGI (gunicorn), ce bloc n'est jamais exécuté.
+    # Pour éviter toute confusion et supprimer l'avertissement "development server",
+    # le lancement via `python3 server.py` est désactivé par défaut.
+    #
+    # Pour lancer en local :
+    #   RUN_LOCAL_SERVER=1 PORT=5000 python3 server.py
+    #
+    if os.getenv("RUN_LOCAL_SERVER",
+                 "").strip() not in ("1", "true", "TRUE", "yes", "YES"):
+        print(
+            "ℹ️ server.py: dev server désactivé (set RUN_LOCAL_SERVER=1 pour lancer en local)."
+        )
+        raise SystemExit(0)
 
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        logger.exception("Telegram bot crashed; keeping Flask API alive. Error: %s", e)
-        flask_thread.join()
+    port = int(os.environ.get("PORT", 5000))
+    print(f"🚀 Velvet MCP Core listening on port {port}")
+    # use_reloader=False évite un double lancement (et donc des doubles logs / ports déjà utilisés)
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
