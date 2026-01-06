@@ -35,4 +35,4 @@ externalPort = 80
 
 [deployment]
 deploymentTarget = "gce"
-run = ["sh", "-c", "python bot.py"]
+run = ["sh", "-c", "sh -c \"python bot.py & gunicorn -w 2 -b 0.0.0.0:$PORT server:app\""]
