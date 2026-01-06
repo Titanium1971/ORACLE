@@ -23,6 +23,7 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 
 APP_VERSION = "v0.9-debug-airtable-errors"
 
+VERSION_TAG = "v2026-01-06_telemetry-seal"
 # ============================================================================
 #  NOTION CONFIGURATION (for ritual/complete endpoint)
 # ============================================================================
@@ -260,6 +261,29 @@ def version():
     return jsonify({"version": APP_VERSION}), 200
 
 
+
+
+@app.get("/whoami")
+def whoami():
+    # Diagnostic endpoint: proves which code+env the published service is actually running
+    return jsonify({
+        "ok": True,
+        "version": APP_VERSION,
+        "version_tag": VERSION_TAG,
+        "env": os.getenv("ENV", "unset"),
+        "airtable_api_key_prefix": (os.getenv("AIRTABLE_API_KEY", "") or os.getenv("AIRTABLE_KEY", ""))[:6],
+        "airtable_base_id_questions": os.getenv("AIRTABLE_BASE_ID", "unset"),
+        "airtable_base_id_core": os.getenv("AIRTABLE_CORE_BASE_ID", "unset"),
+        "airtable_questions_table": os.getenv("AIRTABLE_TABLE_ID", "unset"),
+        "airtable_players_table": os.getenv("AIRTABLE_PLAYERS_TABLE", "unset"),
+        "airtable_attempts_table": os.getenv("AIRTABLE_ATTEMPTS_TABLE", "unset"),
+        "airtable_payloads_table": os.getenv("AIRTABLE_PAYLOADS_TABLE", "unset"),
+        "airtable_answers_table": os.getenv("AIRTABLE_ANSWERS_TABLE", "unset"),
+        "airtable_feedback_table": os.getenv("AIRTABLE_FEEDBACK_TABLE", "unset"),
+        "notion_api_key_prefix": (os.getenv("NOTION_API_KEY", ""))[:6],
+        "notion_exams_db_id": os.getenv("NOTION_EXAMS_DB_ID", "unset"),
+        "utc": datetime.now(timezone.utc).isoformat(),
+    }), 200
 @app.get("/health")
 def health():
     air_ok = False
