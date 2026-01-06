@@ -21,39 +21,7 @@ from flask_cors import CORS
 
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-APP_VERSION = "v0.9-debug-airtable-errors+beta-idempotent"
-
-# ============================================================================
-#  BETA AIRTABLE CONFIGURATION (players_beta + rituel_attempts_beta)
-#  - Uses the same AIRTABLE_API_KEY (shared)
-#  - Isolated via BETA_* IDs (base_id + table_ids)
-#  - Activated when payload env/mode == "BETA" OR when FORCE_BETA_MODE=1
-# ============================================================================
-BETA_AIRTABLE_BASE_ID = os.getenv("BETA_AIRTABLE_BASE_ID")
-BETA_AIRTABLE_PLAYERS_TABLE_ID = os.getenv("BETA_AIRTABLE_PLAYERS_TABLE_ID")
-BETA_AIRTABLE_ATTEMPTS_TABLE_ID = os.getenv("BETA_AIRTABLE_ATTEMPTS_TABLE_ID")
-FORCE_BETA_MODE = os.getenv("FORCE_BETA_MODE", "").strip() in ("1", "true", "TRUE", "yes", "YES")
-
-def _is_beta_payload(payload: dict) -> bool:
-    """Return True if this request must log to the BETA base."""
-    if FORCE_BETA_MODE:
-        return True
-    mode = (payload.get("env") or payload.get("mode") or "").strip()
-    return mode.upper() == "BETA"
-
-def _beta_tables_ready() -> bool:
-    return bool(BETA_AIRTABLE_BASE_ID and BETA_AIRTABLE_PLAYERS_TABLE_ID and BETA_AIRTABLE_ATTEMPTS_TABLE_ID)
-
-def _beta_context(payload: dict):
-    """Return (enabled, base_id, players_table_id, attempts_table_id)."""
-    enabled = _is_beta_payload(payload)
-    if not enabled:
-        return (False, None, None, None)
-    if not _beta_tables_ready():
-        # If BETA mode requested but env not set, fail fast with explicit error.
-        return (True, None, None, None)
-    return (True, BETA_AIRTABLE_BASE_ID, BETA_AIRTABLE_PLAYERS_TABLE_ID, BETA_AIRTABLE_ATTEMPTS_TABLE_ID)
-
+APP_VERSION = "v0.9-debug-airtable-errors"
 
 # ============================================================================
 #  NOTION CONFIGURATION (for ritual/complete endpoint)
@@ -293,12 +261,11 @@ def version():
 
 
 
+
+
 @app.get("/ping")
 def ping():
-    # Minimal endpoint for Publish diagnostics (no external deps)
     return jsonify({"ok": True, "version": APP_VERSION}), 200
-
-
 
 @app.get("/health")
 def health():
@@ -460,10 +427,6 @@ def _airtable_headers():
 
 
 def _airtable_base_id(table_name=""):
-    # --- BETA routing: if table_name is a BETA table_id, force BETA base
-    if _beta_tables_ready() and table_name in (BETA_AIRTABLE_PLAYERS_TABLE_ID, BETA_AIRTABLE_ATTEMPTS_TABLE_ID):
-        return BETA_AIRTABLE_BASE_ID
-
     # Si c'est une table de questions, utiliser AIRTABLE_BASE_ID
     # Sinon utiliser AIRTABLE_CORE_BASE_ID pour players/attempts/etc
     questions_table = os.getenv("AIRTABLE_TABLE_ID", "")
@@ -599,17 +562,8 @@ def ritual_start():
         if not telegram_user_id:
             return jsonify({"ok": False, "error": "missing_telegram_user_id"}), 400
 
-        # Select target tables (CORE by default, BETA if requested)
-        beta_enabled, beta_base, beta_players, beta_attempts = _beta_context(payload)
-        if beta_enabled and not beta_base:
-            return jsonify({
-                "ok": False,
-                "error": "beta_env_missing",
-                "details": "BETA_* Airtable env vars are required when env/mode=BETA"
-            }), 500
-
-        players_table = (beta_players if beta_enabled else (os.getenv("AIRTABLE_PLAYERS_TABLE") or "players"))
-        attempts_table = (beta_attempts if beta_enabled else (os.getenv("AIRTABLE_ATTEMPTS_TABLE") or "rituel_attempts"))
+        players_table = os.getenv("AIRTABLE_PLAYERS_TABLE") or "players"
+        attempts_table = os.getenv("AIRTABLE_ATTEMPTS_TABLE") or "rituel_attempts"
         print(
             f"🔵 players_table = {players_table}, attempts_table = {attempts_table}", flush=True
         )
@@ -637,14 +591,13 @@ def ritual_start():
         # Create attempt (write only whitelisted raw fields; never computed/system fields)
         fields = {
             "player": [p["record_id"]],
-            "started_at": payload.get("started_at") or datetime.now(timezone.utc).isoformat(),
+            "started_at":
+            payload.get("started_at") or datetime.now(timezone.utc).isoformat(),
             "mode": airtable_mode,
-            "status": payload.get("status") or "STARTED",
+            "status":
+            payload.get("status") or "STARTED",
+            "status_technique": "INIT",  # Champ obligatoire pour Airtable
         }
-
-        # CORE schema may require this field; BETA schema does not
-        if not beta_enabled:
-            fields["status_technique"] = "INIT"
         # optional text mirror if you have one; safe to ignore if field absent
         if payload.get("Players"):
             fields["Players"] = payload.get("Players")
