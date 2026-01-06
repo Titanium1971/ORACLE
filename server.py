@@ -408,6 +408,10 @@ def _json():
     except Exception:
         return {}
 
+def _utc_now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
 
 def _airtable_headers():
     key = os.getenv("AIRTABLE_API_KEY") or os.getenv("AIRTABLE_KEY")
@@ -419,15 +423,42 @@ def _airtable_headers():
     }
 
 
+# -----------------------------------------------------
+# BETA Airtable routing (Base + Table IDs dédiés)
+# -----------------------------------------------------
+BETA_AIRTABLE_BASE_ID = os.getenv("BETA_AIRTABLE_BASE_ID")
+BETA_AIRTABLE_PLAYERS_TABLE_ID = os.getenv("BETA_AIRTABLE_PLAYERS_TABLE_ID")
+BETA_AIRTABLE_ATTEMPTS_TABLE_ID = os.getenv("BETA_AIRTABLE_ATTEMPTS_TABLE_ID")
+
+def beta_airtable_enabled():
+    return bool(BETA_AIRTABLE_BASE_ID and BETA_AIRTABLE_PLAYERS_TABLE_ID and BETA_AIRTABLE_ATTEMPTS_TABLE_ID)
+
+def beta_players_table():
+    return BETA_AIRTABLE_PLAYERS_TABLE_ID or os.getenv("AIRTABLE_PLAYERS_TABLE", "players")
+
+def beta_attempts_table():
+    return BETA_AIRTABLE_ATTEMPTS_TABLE_ID or os.getenv("AIRTABLE_ATTEMPTS_TABLE", "rituel_attempts")
+
 def _airtable_base_id(table_name=""):
+    # ROUTING BETA (prioritaire) : si on écrit dans players/attempts de la base BETA
+    if beta_airtable_enabled():
+        beta_tables = {
+            BETA_AIRTABLE_PLAYERS_TABLE_ID,
+            BETA_AIRTABLE_ATTEMPTS_TABLE_ID,
+            "players_beta",
+            "rituel_attempts_beta",
+        }
+        if table_name in beta_tables:
+            return BETA_AIRTABLE_BASE_ID
+
     # Si c'est une table de questions, utiliser AIRTABLE_BASE_ID
     # Sinon utiliser AIRTABLE_CORE_BASE_ID pour players/attempts/etc
     questions_table = os.getenv("AIRTABLE_TABLE_ID", "")
-    
+
     # Liste des tables qui vont dans CORE (players/attempts/etc)
     core_tables = [
         "players",
-        "rituel_attempts", 
+        "rituel_attempts",
         "rituel_webapp_payloads",
         "rituel_answers",
         "rituel_feedback",
@@ -437,17 +468,17 @@ def _airtable_base_id(table_name=""):
         os.getenv("AIRTABLE_ANSWERS_TABLE", ""),
         os.getenv("AIRTABLE_FEEDBACK_TABLE", ""),
     ]
-    
+
     # Si c'est la table de questions -> base QUESTIONS
     if table_name == questions_table:
         return os.getenv("AIRTABLE_BASE_ID")
-    
+
     # Si c'est une table de joueurs/tentatives -> base CORE
     if table_name in core_tables:
         core_base = os.getenv("AIRTABLE_CORE_BASE_ID")
         if core_base:
             return core_base
-    
+
     # Fallback sur base questions (ancien comportement)
     return os.getenv("AIRTABLE_BASE_ID")
 
@@ -543,32 +574,32 @@ def __routes():
 def ritual_start():
     if request.method == "OPTIONS":
         return ("", 204)
-    
+
+    payload = _json()
+    telegram_user_id = payload.get("telegram_user_id") or payload.get("user_id") or payload.get("tg_user_id")
+    if not telegram_user_id:
+        return jsonify({"ok": False, "error": "missing_telegram_user_id"}), 400
+
+    # BETA: on ne crée pas de tentative au start (table minimaliste). On ancre seulement le player.
+    if beta_airtable_enabled():
+        p = upsert_player_by_telegram_user_id(beta_players_table(), str(telegram_user_id))
+        if not p.get("ok"):
+            return jsonify({"ok": False, "error": "player_upsert_failed", "details": p}), 500
+
+        return jsonify({
+            "ok": True,
+            "env": "BETA",
+            "player_record_id": p["record_id"],
+            "started_at": payload.get("started_at") or _utc_now_iso()
+        })
+
+    # CORE (legacy): comportement historique
     try:
         print("🔵 DEBUG /ritual/start appelé")
 
-        payload = _json()
-        telegram_user_id = payload.get("telegram_user_id") or payload.get(
-            "user_id") or payload.get("tg_user_id")
-        print(f"🔵 telegram_user_id = {telegram_user_id}")
-
-        if not telegram_user_id:
-            return jsonify({"ok": False, "error": "missing_telegram_user_id"}), 400
-
-        players_table = os.getenv("AIRTABLE_PLAYERS_TABLE") or "players"
-        attempts_table = os.getenv("AIRTABLE_ATTEMPTS_TABLE") or "rituel_attempts"
-        print(
-            f"🔵 players_table = {players_table}, attempts_table = {attempts_table}", flush=True
-        )
-        print(f"🔵 payload complet = {payload}", flush=True)
-
-        p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
+        p = upsert_player_by_telegram_user_id(os.getenv("AIRTABLE_PLAYERS_TABLE") or "players", str(telegram_user_id))
         if not p.get("ok"):
-            return jsonify({
-                "ok": False,
-                "error": "player_upsert_failed",
-                "details": p
-            }), 500
+            return jsonify({"ok": False, "error": "player_upsert_failed", "details": p}), 500
 
         # Translate mode for Airtable (app.js sends "rituel_full_v1" but Airtable expects "PROD" or "TEST")
         raw_mode = payload.get("mode") or payload.get("env") or "PROD"
@@ -578,59 +609,32 @@ def ritual_start():
             airtable_mode = "TEST"
         else:
             airtable_mode = "PROD"  # fallback
-        
-        print(f"🔵 Mode translation: {raw_mode} → {airtable_mode}", flush=True)
+
+        attempts_table = os.getenv("AIRTABLE_ATTEMPTS_TABLE") or "rituel_attempts"
 
         # Create attempt (write only whitelisted raw fields; never computed/system fields)
         fields = {
             "player": [p["record_id"]],
-            "started_at":
-            payload.get("started_at") or datetime.now(timezone.utc).isoformat(),
+            "started_at": payload.get("started_at") or datetime.now(timezone.utc).isoformat(),
             "mode": airtable_mode,
-            "status":
-            payload.get("status") or "STARTED",
-            "status_technique": "INIT",  # Champ obligatoire pour Airtable
+            "status": payload.get("status") or "STARTED",
+            "status_technique": "INIT",
         }
-        # optional text mirror if you have one; safe to ignore if field absent
         if payload.get("Players"):
             fields["Players"] = payload.get("Players")
 
-        print(f"🔵 DEBUG - Player record_id créé: {p['record_id']}")
-        print(f"🔵 DEBUG - Tentative création attempt avec fields: {json.dumps(fields, indent=2)}")
-        
         created = airtable_create(attempts_table, fields)
-        
-        print(f"🔵 DEBUG - Réponse airtable_create: {json.dumps(created, indent=2)}")
-        
-        if not created.get("ok"):
-            print(f"🔴 ERREUR AIRTABLE COMPLÈTE:")
-            print(f"🔴 Status Code: {created.get('status')}")
-            print(f"🔴 Data: {json.dumps(created.get('data'), indent=2)}")
-            print(f"🔴 Fields envoyés: {json.dumps(fields, indent=2)}")
+        if created.get("ok"):
             return jsonify({
-                "ok": False,
-                "error": "attempt_create_failed",
-                "details": created,
-                "fields_sent": fields,
-                "airtable_response": created.get("data")
-            }), 500
+                "ok": True,
+                "action": "created",
+                "attempt_record_id": created["data"]["id"]
+            })
 
-        return jsonify({
-            "ok": True,
-            "version": APP_VERSION,
-            "attempt_id": created["data"]["id"],
-            "player_record_id": p["record_id"],
-        })
-    
+        return jsonify({"ok": False, "error": "attempt_create_failed", "details": created}), 500
+
     except Exception as e:
-        print(f"🔴 EXCEPTION DANS /ritual/start: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            "ok": False,
-            "error": "internal_server_error",
-            "message": str(e)
-        }), 500
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/ritual/complete", methods=["POST", "OPTIONS"])
@@ -646,6 +650,72 @@ def ritual_complete():
 
     if not telegram_user_id:
         return jsonify({"ok": False, "error": "missing_telegram_user_id"}), 400
+
+    
+    # BETA: écriture minimale + Notion (si configuré)
+    if beta_airtable_enabled():
+        players_table = beta_players_table()
+        attempts_table = beta_attempts_table()
+
+        p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
+        if not p.get("ok"):
+            return jsonify({"ok": False, "error": "player_upsert_failed", "details": p}), 500
+
+        # Normalisation des champs (tolérant aux payloads WebApp différents)
+        started_at = payload.get("started_at") or (payload.get("ritual") or {}).get("started_at") or _utc_now_iso()
+        completed_at = payload.get("completed_at") or (payload.get("ritual") or {}).get("completed_at") or _utc_now_iso()
+
+        score_raw = payload.get("score_raw") or payload.get("score") or (payload.get("ritual") or {}).get("score_raw") or 0
+        score_max = payload.get("score_max") or payload.get("total") or (payload.get("ritual") or {}).get("score_max") or 15
+        time_total_seconds = payload.get("time_total_seconds") or payload.get("time_spent_seconds") or (payload.get("ritual") or {}).get("time_total_seconds") or 0
+
+        # answers_json: string JSON (jamais objet)
+        answers_any = payload.get("answers_json") or payload.get("answers") or (payload.get("ritual") or {}).get("answers_json") or (payload.get("ritual") or {}).get("answers")
+        if isinstance(answers_any, str):
+            answers_json = answers_any
+        else:
+            try:
+                answers_json = json.dumps(answers_any or {}, ensure_ascii=False)
+            except Exception:
+                answers_json = "{}"
+
+        feedback_text = payload.get("feedback_text") or payload.get("comment_text") or (payload.get("ritual") or {}).get("feedback_text") or ""
+
+        # WHITELIST (anti-422)
+        fields = {
+            "player": [p["record_id"]],
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "score_raw": int(score_raw) if str(score_raw).isdigit() else score_raw,
+            "score_max": int(score_max) if str(score_max).isdigit() else score_max,
+            "time_total_seconds": int(time_total_seconds) if str(time_total_seconds).isdigit() else time_total_seconds,
+            "answers_json": answers_json,
+            "feedback_text": feedback_text,
+            "env": "BETA",
+        }
+
+        created = airtable_create(attempts_table, fields)
+        if not created.get("ok"):
+            return jsonify({"ok": False, "error": "beta_attempt_create_failed", "details": created}), 500
+
+        # Notion (on conserve la logique existante)
+        notion_payload = {
+            "telegram_user_id": str(telegram_user_id),
+            "score": int(score_raw) if str(score_raw).isdigit() else score_raw,
+            "total": int(score_max) if str(score_max).isdigit() else score_max,
+            "time_total_seconds": int(time_total_seconds) if str(time_total_seconds).isdigit() else time_total_seconds,
+            "time_formatted": None,
+            "answers": payload.get("answers") or (payload.get("ritual") or {}).get("answers") or [],
+            "comment_text": feedback_text,
+        }
+        notion_res = write_rituel_to_notion(notion_payload)
+
+        return jsonify({
+            "ok": True,
+            "env": "BETA",
+            "attempt_record_id": created["data"]["id"],
+            "notion_written": notion_res.get("ok") if isinstance(notion_res, dict) else False
+        })
 
     players_table = os.getenv("AIRTABLE_PLAYERS_TABLE", "players")
     attempts_table = os.getenv("AIRTABLE_ATTEMPTS_TABLE", "rituel_attempts")
