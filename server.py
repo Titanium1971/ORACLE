@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 import requests
 from flask import Flask, jsonify, request, send_from_directory
 
-APP_ENV = os.getenv("ENV", "PROD").upper()
+APP_ENV = "BETA"  # forced: Airtable env field only supports BETA
 
 app = Flask(__name__, static_folder='webapp', static_url_path='/webapp')
 
@@ -658,7 +658,7 @@ def ritual_start():
             }), 500
 
         # Translate mode for Airtable (app.js sends "rituel_full_v1" but Airtable expects "PROD" or "TEST")
-        raw_mode = payload.get("mode") or payload.get("env") or "PROD"
+        raw_mode = payload.get("mode") or payload.get("env") or "BETA"
         if raw_mode in ("rituel_full_v1", "ritual_full_v1", "rituel_v1",
                         "ritual_v1"):
             airtable_mode = "PROD"
@@ -675,7 +675,7 @@ def ritual_start():
             "started_at": payload.get("started_at") or datetime.now(timezone.utc).isoformat(),
             "mode": airtable_mode,
             # BETA: store environment explicitly if the field exists
-            "env": APP_ENV,
+            "env": "BETA",
             # If score_max is not provided at start, default to 15 (rituel standard)
             "score_max": int(payload.get("score_max") or payload.get("total") or 15),
             # Human-readable label for debugging (safe if field exists)
@@ -783,7 +783,7 @@ def ritual_complete():
             # Keep existing status semantics; if field doesn't exist in Airtable it will 422 and we retry later if needed
             "status": payload.get("status") or "COMPLETED",
             # Mirror env on the attempt row (field exists in BETA schema)
-            "env": APP_ENV,
+            "env": "BETA",
         }
 
         # Ensure score_max is always present on completion (BETA schema expects it)
