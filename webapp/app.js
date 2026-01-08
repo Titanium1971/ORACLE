@@ -1134,6 +1134,14 @@ if (feedbackFinalSendBtn) {
       analysis_mode: "nova_writing_score_v1"
     };
 
+    // ✅ Attach attempt_id + telegram_user_id to the Telegram sendData payload
+    // This allows the bot (WEB_APP_DATA handler) to link feedback to the correct attempt in Airtable.
+    // (HTTP /ritual/complete already receives attempt_id, but sendData previously did not.)
+    finalPayload.attempt_id = ritualAttemptId || null;
+    finalPayload.attempt_record_id = ritualAttemptId || null; // alias for server-side compatibility
+    finalPayload.telegram_user_id = ritualPlayerTelegramUserId || getTelegramUserId() || null;
+
+
     // ✅ 1) HTTP complete (Network visible)
     if (!finalPayloadHttpSent) {
       try {
