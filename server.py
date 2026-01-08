@@ -871,24 +871,54 @@ def ritual_complete():
 
         # Store full answers + feedback directly on the attempt row (BETA schema fields)
         # We accept several possible payload keys for compatibility.
+        # Try to extract answers from top-level payload or nested client_payload (often carries WebApp data)
+        client_payload = payload.get("client_payload")
+        if isinstance(client_payload, str):
+            try:
+                client_payload = json.loads(client_payload)
+            except Exception:
+                pass
+
+        def _extract_answers(obj):
+            if not isinstance(obj, dict):
+                return None
+            return (
+                obj.get("answers")
+                or obj.get("rituel_answers")
+                or obj.get("answers_json")
+                or obj.get("answersPayload")
+                or (obj.get("results") or {}).get("answers")
+                or (obj.get("data") or {}).get("answers")
+            )
+
         answers_for_row = (
-            payload.get("answers")
-            or payload.get("rituel_answers")
-            or payload.get("answers_json")
-            or payload.get("answersPayload")
-            or (payload.get("results") or {}).get("answers")
-            or (payload.get("data") or {}).get("answers")
+            _extract_answers(payload)
+            or _extract_answers(client_payload)
         )
+
+        # Sometimes WebApp nests again inside client_payload
+        if answers_for_row is None and isinstance(client_payload, dict):
+            nested = client_payload.get("client_payload") or client_payload.get("payload") or client_payload.get("data")
+            if isinstance(nested, str):
+                try:
+                    nested = json.loads(nested)
+                except Exception:
+                    pass
+            answers_for_row = _extract_answers(nested)
 
         # If the WebApp doesn't send answers yet, we still write a diagnostic payload
         # so the Airtable field is never empty and we can adjust keys without guessing.
         if answers_for_row is None:
-            answers_for_row = {
+            diag = {
                 "_note": "answers missing in payload",
                 "payload_keys": sorted(list(payload.keys())),
             }
-
-        # Format answers_json for ergonomic reading in Airtable:
+            if isinstance(client_payload, dict):
+                diag["client_payload_keys"] = sorted(list(client_payload.keys()))
+            else:
+                diag["client_payload_type"] = type(client_payload).__name__
+            answers_for_row = diag
+# Format answers_json for ergonomic reading in Airtable:
         # - add question number (q: 1..N)
         # - keep only the most useful fields when possible
         if answers_for_row is not None:
