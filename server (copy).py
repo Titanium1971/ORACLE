@@ -8,7 +8,6 @@
 import os
 import json
 import random
-import re
 from datetime import datetime, timezone
 
 import requests
@@ -672,14 +671,11 @@ def ritual_start():
         # Create attempt (write only whitelisted raw fields; never computed/system fields)
         fields = {
             "player": [p["record_id"]],
-            "started_at": payload.get("started_at") or datetime.now(timezone.utc).isoformat(),
-            "mode": airtable_mode,
-            # BETA: store environment explicitly if the field exists
-            "env": APP_ENV,
-            # If score_max is not provided at start, default to 15 (rituel standard)
-            "score_max": int(payload.get("score_max") or payload.get("total") or 15),
-            # Human-readable label for debugging (safe if field exists)
-            "attempt_label": payload.get("attempt_label") or datetime.now(timezone.utc).strftime("RIT-%Y%m%d-%H%M%S"),
+            "started_at":
+            payload.get("started_at")
+            or datetime.now(timezone.utc).isoformat(),
+            "mode":
+            airtable_mode,
         }
         # optional text mirror if you have one; safe to ignore if field absent
         if payload.get("Players"):
@@ -778,25 +774,12 @@ def ritual_complete():
     attempt_update = None
     if attempt_record_id:
         upd = {
-            # Always stamp completion time (server-side fallback)
-            "completed_at": payload.get("completed_at") or datetime.now(timezone.utc).isoformat(),
-            # Keep existing status semantics; if field doesn't exist in Airtable it will 422 and we retry later if needed
-            "status": payload.get("status") or "COMPLETED",
-            # Mirror env on the attempt row (field exists in BETA schema)
-            "env": APP_ENV,
+            "completed_at":
+            payload.get("completed_at")
+            or datetime.now(timezone.utc).isoformat(),
+            "status":
+            payload.get("status") or "COMPLETED",
         }
-
-        # Ensure score_max is always present on completion (BETA schema expects it)
-        if payload.get("score_max") is not None:
-            upd["score_max"] = payload.get("score_max")
-        elif payload.get("total") is not None:
-            upd["score_max"] = payload.get("total")
-        else:
-            upd["score_max"] = 15
-
-        # Optional: attempt_label can be provided by client; if absent, keep existing value
-        if payload.get("attempt_label") is not None:
-            upd["attempt_label"] = payload.get("attempt_label")
         # scoring fields (only if provided)
         for k_src, k_dst in [
             ("score_raw", "score_raw"),
@@ -806,27 +789,6 @@ def ritual_complete():
         ]:
             if payload.get(k_src) is not None:
                 upd[k_dst] = payload.get(k_src)
-
-        # Backward-compatible aliases from WebApp payload
-        if upd.get("score_raw") is None and payload.get("score") is not None:
-            upd["score_raw"] = payload.get("score")
-
-        if upd.get("time_total_seconds") is None and payload.get("time_spent_seconds") is not None:
-            upd["time_total_seconds"] = payload.get("time_spent_seconds")
-
-        # Store full answers + feedback directly on the attempt row (BETA schema fields)
-        answers_for_row = payload.get("answers") or payload.get("rituel_answers")
-        if answers_for_row is not None:
-            try:
-                upd["answers_json"] = json.dumps(answers_for_row, ensure_ascii=False)[:98000]
-            except Exception:
-                upd["answers_json"] = str(answers_for_row)[:98000]
-
-        fb_text = payload.get("feedback_text") or payload.get("comment_text")
-        if fb_text is None and isinstance(payload.get("feedback"), dict):
-            fb_text = payload["feedback"].get("text")
-        if fb_text is not None:
-            upd["feedback_text"] = str(fb_text)[:1900]
 
         # Translate mode for Airtable
         if payload.get("mode") is not None:
@@ -839,30 +801,8 @@ def ritual_complete():
             else:
                 upd["mode"] = "PROD"
 
-        attempt_update = airtable_update(attempts_table, str(attempt_record_id), upd)
-
-        # If BETA table is missing some fields, retry by removing unknown fields (max 5 attempts)
-        tries = 0
-        while attempt_update and (not attempt_update.get("ok")) and attempt_update.get("status") == 422 and tries < 5:
-            tries += 1
-            msg = ""
-            try:
-                msg = ((attempt_update.get("data") or {}).get("error") or {}).get("message") or ""
-            except Exception:
-                msg = ""
-            if "Unknown field name" not in msg:
-                break
-            # Extract field name between quotes: Unknown field name: "xxx"
-            m_uf = re.search(r'Unknown field name:\s*\"([^\"]+)\"', msg)
-            if not m_uf:
-                break
-            bad_field = m_uf.group(1)
-            if bad_field in upd:
-                upd.pop(bad_field, None)
-                print(f"🟡 Airtable 422 (unknown field '{bad_field}') → retry sans ce champ", flush=True)
-                attempt_update = airtable_update(attempts_table, str(attempt_record_id), upd)
-            else:
-                break
+        attempt_update = airtable_update(attempts_table,
+                                         str(attempt_record_id), upd)
 
     # 3) Insert answers (if provided) — tolerant schema
     answers = payload.get("answers") or payload.get("rituel_answers") or []
