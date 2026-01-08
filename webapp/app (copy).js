@@ -360,7 +360,10 @@ async function postRitualComplete(payload){
     time_total_seconds: Number.isFinite(Number(payload?.time_total_seconds ?? payload?.time_spent_seconds)) ? Number(payload.time_total_seconds ?? payload.time_spent_seconds) : undefined,
     completed_at: new Date().toISOString(),
     // bonus (non bloquant si backend ignore)
-    client_payload: payload
+    client_payload: payload,
+    // ✅ direct fields for backend (no guessing)
+    answers: payload?.answers || undefined,
+    feedback_text: payload?.comment_text || payload?.feedback_text || ""
   };
 
   console.log("🟡 HTTP /ritual/complete →", url, "| attempt_id =", attempt_id);
@@ -1070,14 +1073,28 @@ function endRituel(){
   finalTotalSeconds = lastTotalSeconds;
 
   finalScore = 0;
-  finalEnrichedAnswers = answers.map(a => {
+  finalEnrichedAnswers = answers.map((a, i) => {
     const q = QUIZ_DATA.find(qq => String(qq.id) === String(a.question_id));
-    let status = "wrong";
 
-    if (a.choice_index === -1) status = "timeout";
-    else if (q && a.choice_index === q.correct_index){ status = "correct"; finalScore += 1; }
+    const correct_index = (q && Number.isFinite(Number(q.correct_index))) ? Number(q.correct_index) : null;
+    const selected_index = (a && Number.isFinite(Number(a.choice_index))) ? Number(a.choice_index) : (a?.choice_index === -1 ? -1 : null);
 
-    return { question_id: a.question_id, choice_letter: a.choice_letter, status };
+    const is_timeout = (selected_index === -1);
+    const is_correct = (!is_timeout && correct_index !== null && selected_index === correct_index);
+
+    const status = is_timeout ? "timeout" : (is_correct ? "correct" : "wrong");
+    if (is_correct) finalScore += 1;
+
+    return {
+      q: i + 1,
+      question_id: a.question_id,
+      selected_index,
+      selected_letter: a.choice_letter || null, // lettre affichée côté UI (après shuffle)
+      correct_index,
+      correct_letter: (correct_index === 0 || correct_index === 1 || correct_index === 2 || correct_index === 3) ? LETTERS[correct_index] : null,
+      status,
+      is_correct
+    };
   });
 
   ritualFinished = true;
