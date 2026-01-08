@@ -578,6 +578,34 @@ def airtable_find_one(table, formula):
     }
 
 
+
+def airtable_find_latest(table, formula, sort_field="started_at"):
+    """Find most recent record matching formula (best effort).
+    Uses Airtable sort query params to pick latest by sort_field desc.
+    """
+    headers = _airtable_headers()
+    base = _airtable_base_id(table)
+    if not headers or not base:
+        return {"ok": False, "error": "missing_airtable_env"}
+    params = {
+        "filterByFormula": formula,
+        "maxRecords": 1,
+        "sort[0][field]": sort_field,
+        "sort[0][direction]": "desc",
+    }
+    r = requests.get(_airtable_url(table), headers=headers, params=params, timeout=20)
+    data = r.json()
+    recs = data.get("records", []) if isinstance(data, dict) else []
+    rec = recs[0] if recs else None
+    return {
+        "ok": r.status_code < 300,
+        "status": r.status_code,
+        "record": rec,
+        "records": recs,
+        "raw": data,
+    }
+
+
 def airtable_update(table, record_id, fields):
     headers = _airtable_headers()
     base = _airtable_base_id(table)
@@ -746,8 +774,14 @@ def ritual_complete():
     payload = _json()
     telegram_user_id = payload.get("telegram_user_id") or payload.get(
         "user_id") or payload.get("tg_user_id")
-    attempt_record_id = payload.get("attempt_record_id") or payload.get(
-        "exam_record_id") or payload.get("attempt_id")
+    attempt_record_id = (
+        payload.get("attempt_record_id")
+        or payload.get("exam_record_id")
+        or payload.get("attempt_id")
+        or payload.get("attemptRecordId")
+        or payload.get("examRecordId")
+        or payload.get("attempt_record")
+    )
 
     if not telegram_user_id:
         return jsonify({"ok": False, "error": "missing_telegram_user_id"}), 400
@@ -774,7 +808,28 @@ def ritual_complete():
     }
     raw_res = airtable_create(payloads_table, raw_fields)
 
-    # 2) Update attempt if we have its record id
+        # 2) Resolve attempt record id (client may omit it)
+    if not attempt_record_id:
+        try:
+            # Pick the most recent non-completed attempt for this player in BETA.
+            formula_parts = [
+                f'{{player}}="{telegram_user_id}"',
+                '{{env}}="BETA"',
+                'OR({completed_at}="", {completed_at}=BLANK())'.replace("{completed_at}", "{completed_at}"),
+            ]
+            if payload.get("attempt_label"):
+                # attempt_label helps disambiguate if multiple attempts exist
+                safe_label = str(payload.get("attempt_label")).replace('"', '\"')
+                formula_parts.append(f'{{attempt_label}}="{safe_label}"')
+            formula = "AND(" + ",".join(formula_parts) + ")"
+            found = airtable_find_latest(attempts_table, formula, sort_field="started_at")
+            rec = found.get("record") if isinstance(found, dict) else None
+            if rec and rec.get("id"):
+                attempt_record_id = rec["id"]
+        except Exception:
+            pass
+
+    # 3) Update attempt row (if we have its record id)
     attempt_update = None
     if attempt_record_id:
         upd = {
