@@ -815,18 +815,51 @@ def ritual_complete():
             upd["time_total_seconds"] = payload.get("time_spent_seconds")
 
         # Store full answers + feedback directly on the attempt row (BETA schema fields)
-        answers_for_row = payload.get("answers") or payload.get("rituel_answers")
+        # We accept several possible payload keys for compatibility.
+        answers_for_row = (
+            payload.get("answers")
+            or payload.get("rituel_answers")
+            or payload.get("answers_json")
+            or payload.get("answersPayload")
+        )
+
+        # Format answers_json for ergonomic reading in Airtable:
+        # - add question number (q: 1..N)
+        # - keep only the most useful fields when possible
         if answers_for_row is not None:
             try:
-                upd["answers_json"] = json.dumps(answers_for_row, ensure_ascii=False)[:98000]
+                formatted = []
+                if isinstance(answers_for_row, list):
+                    for i, a in enumerate(answers_for_row, start=1):
+                        if isinstance(a, dict):
+                            formatted.append({
+                                "q": i,
+                                "answer": a.get("answer") or a.get("selected") or a.get("user_answer"),
+                                "correct": a.get("correct") or a.get("correct_answer"),
+                                "is_correct": a.get("is_correct") if "is_correct" in a else a.get("correct_flag"),
+                            })
+                        else:
+                            formatted.append({"q": i, "value": a})
+                    answers_json_val = formatted
+                else:
+                    # If it's already a JSON string or dict, store as-is (best effort).
+                    answers_json_val = answers_for_row
+
+                upd["answers_json"] = json.dumps(
+                    answers_json_val,
+                    ensure_ascii=False,
+                    indent=2
+                )[:98000]
             except Exception:
                 upd["answers_json"] = str(answers_for_row)[:98000]
 
+        # Always write feedback_text (empty string if none)
         fb_text = payload.get("feedback_text") or payload.get("comment_text")
         if fb_text is None and isinstance(payload.get("feedback"), dict):
             fb_text = payload["feedback"].get("text")
-        if fb_text is not None:
-            upd["feedback_text"] = str(fb_text)[:1900]
+        if fb_text is None:
+            fb_text = ""
+        upd["feedback_text"] = str(fb_text)[:1900]
 
         # Translate mode for Airtable
         if payload.get("mode") is not None:
