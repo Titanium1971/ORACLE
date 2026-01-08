@@ -688,6 +688,17 @@ def ritual_start():
 
         created = airtable_create(attempts_table, fields)
 
+        # Retry si la table BETA n'a pas le champ "mode"
+        if (not created.get("ok")
+                and created.get("status") == 422
+                and isinstance(created.get("data"), dict)
+                and isinstance(created["data"].get("error"), dict)
+                and "Unknown field name" in str(created["data"]["error"].get("message", ""))
+                and "mode" in str(created["data"]["error"].get("message", ""))):
+            fields.pop("mode", None)
+            print("🟡 Airtable 422 (mode inconnu) → retry sans 'mode'", flush=True)
+            created = airtable_create(attempts_table, fields)
+
         print(
             f"🔵 DEBUG - Réponse airtable_create: {json.dumps(created, indent=2)}"
         )
