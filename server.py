@@ -772,6 +772,19 @@ def ritual_complete():
         return ("", 204)
 
     payload = _json()
+    try:
+        print("🔶 /ritual/complete payload_keys =", sorted(list(payload.keys())))
+        if "client_payload" in payload:
+            cp = payload.get("client_payload")
+            cp_type = type(cp).__name__
+            cp_preview = str(cp)
+            if len(cp_preview) > 1200:
+                cp_preview = cp_preview[:1200] + "…"
+            print("🔶 /ritual/complete client_payload_type =", cp_type)
+            print("🔶 /ritual/complete client_payload_preview =", cp_preview)
+    except Exception as _e:
+        print("🔶 /ritual/complete payload_log_error =", repr(_e))
+
     telegram_user_id = payload.get("telegram_user_id") or payload.get(
         "user_id") or payload.get("tg_user_id")
     attempt_record_id = (
@@ -981,17 +994,57 @@ def ritual_complete():
         # - add question number (q: 1..N)
         # - keep only the most useful fields when possible
         if answers_for_row is not None:
+            def _idx_to_letter(x):
+                try:
+                    xi = int(x)
+                    return ["A","B","C","D"][xi] if 0 <= xi <= 3 else None
+                except Exception:
+                    return None
+
+            def _normalize_answer_item(a, qn):
+                if not isinstance(a, dict):
+                    return {"q": qn, "raw": a}
+                qid = a.get("question_id") or a.get("qid") or a.get("id_question") or a.get("questionId") or a.get("id")
+                ans = (
+                    a.get("answer") or a.get("selected") or a.get("user_answer") or a.get("choice")
+                    or a.get("selected_option") or a.get("selected_letter") or a.get("userChoice")
+                )
+                if ans is None:
+                    ans = a.get("selected_index") if "selected_index" in a else (a.get("answer_index") if "answer_index" in a else a.get("selectedIndex"))
+                ans_letter = ans.strip().upper() if isinstance(ans, str) and ans.strip().upper() in ("A","B","C","D") else _idx_to_letter(ans)
+                corr = (
+                    a.get("correct") or a.get("correct_answer") or a.get("correctOption")
+                    or a.get("correct_letter") or a.get("correctLetter")
+                )
+                if corr is None:
+                    corr = a.get("correct_index") if "correct_index" in a else (a.get("correctIndex") if "correctIndex" in a else a.get("answer_correct_index"))
+                corr_letter = corr.strip().upper() if isinstance(corr, str) and corr.strip().upper() in ("A","B","C","D") else _idx_to_letter(corr)
+                is_corr = None
+                for k in ("is_correct","isCorrect","correct_flag","correctFlag","ok"):
+                    if k in a:
+                        is_corr = a.get(k)
+                        break
+                if isinstance(is_corr, str):
+                    if is_corr.lower() in ("true","1","yes","ok"):
+                        is_corr = True
+                    elif is_corr.lower() in ("false","0","no"):
+                        is_corr = False
+                if is_corr is None and ans_letter and corr_letter:
+                    is_corr = (ans_letter == corr_letter)
+                out = {"q": qn, "answer": ans_letter, "correct": corr_letter, "is_correct": is_corr}
+                if qid is not None:
+                    out["question_id"] = qid
+                if out.get("answer") is None and out.get("correct") is None and out.get("is_correct") is None:
+                    out["raw_keys"] = sorted(list(a.keys()))
+                    out["raw_preview"] = {k: a.get(k) for k in list(a.keys())[:12]}
+                return out
+
             try:
                 formatted = []
                 if isinstance(answers_for_row, list):
                     for i, a in enumerate(answers_for_row, start=1):
                         if isinstance(a, dict):
-                            formatted.append({
-                                "q": i,
-                                "answer": a.get("answer") or a.get("selected") or a.get("user_answer"),
-                                "correct": a.get("correct") or a.get("correct_answer"),
-                                "is_correct": a.get("is_correct") if "is_correct" in a else a.get("correct_flag"),
-                            })
+                            formatted.append(_normalize_answer_item(a, i))
                         else:
                             formatted.append({"q": i, "value": a})
                     answers_json_val = formatted

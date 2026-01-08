@@ -871,24 +871,113 @@ def ritual_complete():
 
         # Store full answers + feedback directly on the attempt row (BETA schema fields)
         # We accept several possible payload keys for compatibility.
+        # Try to extract answers from top-level payload or nested client_payload (often carries WebApp data)
+        client_payload_raw = payload.get("client_payload")
+        client_payload = client_payload_raw
+        client_payload_parse_error = None
+
+        # client_payload can be a dict already, or a JSON string
+        if isinstance(client_payload, str):
+            try:
+                client_payload = json.loads(client_payload)
+            except Exception as e:
+                client_payload_parse_error = str(e)
+
+        def _looks_like_answers_list(x):
+            """Heuristic: list of dicts with answer-ish keys."""
+            if not isinstance(x, list) or not x:
+                return False
+            if not all(isinstance(it, dict) for it in x):
+                return False
+            keys = set().union(*(it.keys() for it in x))
+            answerish = {"answer", "selected", "choice", "correct", "correct_index", "is_correct", "question_id", "qid", "id_question"}
+            return len(keys.intersection(answerish)) >= 1
+
+        def _extract_answers(obj):
+            """Shallow extraction from common keys."""
+            if isinstance(obj, list) and _looks_like_answers_list(obj):
+                return obj
+            if not isinstance(obj, dict):
+                return None
+            cand = (
+                obj.get("answers")
+                or obj.get("rituel_answers")
+                or obj.get("answers_json")
+                or obj.get("answersPayload")
+                or obj.get("responses")
+                or (obj.get("results") or {}).get("answers")
+                or (obj.get("data") or {}).get("answers")
+                or (obj.get("payload") or {}).get("answers")
+            )
+            if isinstance(cand, str):
+                try:
+                    cand = json.loads(cand)
+                except Exception:
+                    pass
+            if isinstance(cand, list):
+                return cand
+            return None
+
+        def _deep_find_answers(obj, depth=0, max_depth=6):
+            """Deep scan for an answers-like list anywhere in nested payload."""
+            if depth > max_depth:
+                return None
+            if _looks_like_answers_list(obj):
+                return obj
+            if isinstance(obj, dict):
+                # Prefer obvious keys first
+                for k in ("answers", "responses", "rituel_answers", "answers_json", "answersPayload"):
+                    v = obj.get(k)
+                    if isinstance(v, str):
+                        try:
+                            v = json.loads(v)
+                        except Exception:
+                            pass
+                    if _looks_like_answers_list(v):
+                        return v
+                for v in obj.values():
+                    found = _deep_find_answers(v, depth + 1, max_depth)
+                    if found is not None:
+                        return found
+            if isinstance(obj, list):
+                for v in obj:
+                    found = _deep_find_answers(v, depth + 1, max_depth)
+                    if found is not None:
+                        return found
+            return None
+
         answers_for_row = (
-            payload.get("answers")
-            or payload.get("rituel_answers")
-            or payload.get("answers_json")
-            or payload.get("answersPayload")
-            or (payload.get("results") or {}).get("answers")
-            or (payload.get("data") or {}).get("answers")
+            _extract_answers(payload)
+            or _extract_answers(client_payload)
+            or _deep_find_answers(client_payload)
+            or _deep_find_answers(payload)
         )
 
-        # If the WebApp doesn't send answers yet, we still write a diagnostic payload
-        # so the Airtable field is never empty and we can adjust keys without guessing.
+        # If the WebApp doesn't send answers yet, write a diagnostic payload so Airtable is never empty
         if answers_for_row is None:
-            answers_for_row = {
+            diag = {
                 "_note": "answers missing in payload",
                 "payload_keys": sorted(list(payload.keys())),
+                "client_payload_type": type(client_payload_raw).__name__,
             }
 
-        # Format answers_json for ergonomic reading in Airtable:
+            # Provide preview of raw client_payload (truncated) to locate where answers are nested
+            if isinstance(client_payload_raw, str):
+                diag["client_payload_len"] = len(client_payload_raw)
+                diag["client_payload_preview"] = client_payload_raw[:1200]
+                if client_payload_parse_error:
+                    diag["client_payload_parse_error"] = client_payload_parse_error
+            elif isinstance(client_payload_raw, dict):
+                diag["client_payload_keys"] = sorted(list(client_payload_raw.keys()))
+            else:
+                diag["client_payload_value"] = str(client_payload_raw)[:300]
+
+            # If parsed client_payload is a dict, include its keys too
+            if isinstance(client_payload, dict):
+                diag["client_payload_parsed_keys"] = sorted(list(client_payload.keys()))
+
+            answers_for_row = diag
+# Format answers_json for ergonomic reading in Airtable:
         # - add question number (q: 1..N)
         # - keep only the most useful fields when possible
         if answers_for_row is not None:
