@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 import requests
 from flask import Flask, jsonify, request, send_from_directory
 
+APP_ENV = os.getenv("ENV", "PROD").upper()
+
 app = Flask(__name__, static_folder='webapp', static_url_path='/webapp')
 
 print("🟢 SERVER.PY LOADED - Flask app initialized")
@@ -463,12 +465,26 @@ def _airtable_headers():
     }
 
 
+
 def _airtable_base_id(table_name=""):
-    # Si c'est une table de questions, utiliser AIRTABLE_BASE_ID
-    # Sinon utiliser AIRTABLE_CORE_BASE_ID pour players/attempts/etc
+    """
+    Routing des bases Airtable.
+
+    - PROD (défaut) : comportement actuel
+      * questions -> AIRTABLE_BASE_ID
+      * core (players/attempts/payloads/answers/feedback) -> AIRTABLE_CORE_BASE_ID (si défini)
+
+    - BETA (ENV=BETA) : tout passe par BETA_AIRTABLE_BASE_ID
+      * questions -> BETA_AIRTABLE_BASE_ID
+      * core -> BETA_AIRTABLE_BASE_ID
+    """
+
+    if APP_ENV == "BETA":
+        return os.getenv("BETA_AIRTABLE_BASE_ID") or os.getenv("AIRTABLE_BASE_ID")
+
+    # === PROD (comportement actuel) ===
     questions_table = os.getenv("AIRTABLE_TABLE_ID", "")
 
-    # Liste des tables qui vont dans CORE (players/attempts/etc)
     core_tables = [
         "players",
         "rituel_attempts",
@@ -482,9 +498,15 @@ def _airtable_base_id(table_name=""):
         os.getenv("AIRTABLE_FEEDBACK_TABLE", ""),
     ]
 
-    # Si c'est la table de questions -> base QUESTIONS
     if table_name == questions_table:
         return os.getenv("AIRTABLE_BASE_ID")
+
+    if table_name in core_tables:
+        core_base = os.getenv("AIRTABLE_CORE_BASE_ID")
+        if core_base:
+            return core_base
+
+    return os.getenv("AIRTABLE_BASE_ID")
 
     # Si c'est une table de joueurs/tentatives -> base CORE
     if table_name in core_tables:
@@ -500,6 +522,22 @@ def _airtable_url(table):
     base = _airtable_base_id(table)
     return f"https://api.airtable.com/v0/{base}/{table}"
 
+
+
+def _core_table_name(prod_env_var: str, default_name: str, beta_env_var: str = "") -> str:
+    """Retourne le nom/ID de table à utiliser selon ENV.
+    - PROD : prod_env_var (si défini) sinon default_name
+    - BETA : beta_env_var (si défini) sinon prod_env_var sinon default_name
+    """
+    if APP_ENV == "BETA":
+        if beta_env_var:
+            v = os.getenv(beta_env_var)
+            if v:
+                return v
+        v2 = os.getenv(prod_env_var)
+        return v2 or default_name
+    v = os.getenv(prod_env_var)
+    return v or default_name
 
 def airtable_create(table, fields):
     headers = _airtable_headers()
@@ -602,9 +640,8 @@ def ritual_start():
                 "error": "missing_telegram_user_id"
             }), 400
 
-        players_table = os.getenv("AIRTABLE_PLAYERS_TABLE") or "players"
-        attempts_table = os.getenv(
-            "AIRTABLE_ATTEMPTS_TABLE") or "rituel_attempts"
+        players_table = _core_table_name("AIRTABLE_PLAYERS_TABLE", "players", "BETA_AIRTABLE_PLAYERS_TABLE_ID")
+        attempts_table = _core_table_name("AIRTABLE_ATTEMPTS_TABLE", "rituel_attempts", "BETA_AIRTABLE_ATTEMPTS_TABLE_ID")
         print(
             f"🔵 players_table = {players_table}, attempts_table = {attempts_table}",
             flush=True)
@@ -700,12 +737,11 @@ def ritual_complete():
     if not telegram_user_id:
         return jsonify({"ok": False, "error": "missing_telegram_user_id"}), 400
 
-    players_table = os.getenv("AIRTABLE_PLAYERS_TABLE", "players")
-    attempts_table = os.getenv("AIRTABLE_ATTEMPTS_TABLE", "rituel_attempts")
-    payloads_table = os.getenv("AIRTABLE_PAYLOADS_TABLE",
-                               "rituel_webapp_payloads")
-    answers_table = os.getenv("AIRTABLE_ANSWERS_TABLE", "rituel_answers")
-    feedback_table = os.getenv("AIRTABLE_FEEDBACK_TABLE", "rituel_feedback")
+    players_table = _core_table_name("AIRTABLE_PLAYERS_TABLE", "players", "BETA_AIRTABLE_PLAYERS_TABLE_ID")
+    attempts_table = _core_table_name("AIRTABLE_ATTEMPTS_TABLE", "rituel_attempts", "BETA_AIRTABLE_ATTEMPTS_TABLE_ID")
+    payloads_table = _core_table_name("AIRTABLE_PAYLOADS_TABLE", "rituel_webapp_payloads", "BETA_AIRTABLE_PAYLOADS_TABLE_ID")
+    answers_table = _core_table_name("AIRTABLE_ANSWERS_TABLE", "rituel_answers", "BETA_AIRTABLE_ANSWERS_TABLE_ID")
+    feedback_table = _core_table_name("AIRTABLE_FEEDBACK_TABLE", "rituel_feedback", "BETA_AIRTABLE_FEEDBACK_TABLE_ID")
 
     p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
     if not p.get("ok"):
