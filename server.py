@@ -821,7 +821,17 @@ def ritual_complete():
             or payload.get("rituel_answers")
             or payload.get("answers_json")
             or payload.get("answersPayload")
+            or (payload.get("results") or {}).get("answers")
+            or (payload.get("data") or {}).get("answers")
         )
+
+        # If the WebApp doesn't send answers yet, we still write a diagnostic payload
+        # so the Airtable field is never empty and we can adjust keys without guessing.
+        if answers_for_row is None:
+            answers_for_row = {
+                "_note": "answers missing in payload",
+                "payload_keys": sorted(list(payload.keys())),
+            }
 
         # Format answers_json for ergonomic reading in Airtable:
         # - add question number (q: 1..N)
