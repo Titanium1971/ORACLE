@@ -1031,7 +1031,16 @@ def ritual_complete():
                         is_corr = False
                 if is_corr is None and ans_letter and corr_letter:
                     is_corr = (ans_letter == corr_letter)
-                out = {"q": qn, "answer": ans_letter, "correct": corr_letter, "is_correct": is_corr}
+                status = (a.get("status") or "").lower()
+                if status == "timeout":
+                    mark = "⏳"
+                elif is_corr is True:
+                    mark = "✅"
+                elif is_corr is False:
+                    mark = "❌"
+                else:
+                    mark = "•"
+                out = {"q": qn, "mark": mark, "answer": ans_letter, "correct": corr_letter, "is_correct": is_corr}
                 if qid is not None:
                     out["question_id"] = qid
                 if out.get("answer") is None and out.get("correct") is None and out.get("is_correct") is None:
