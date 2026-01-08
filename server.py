@@ -47,6 +47,7 @@ NOTION_FIELDS = {
 
 NOTION_BASE_URL = "https://api.notion.com/v1"
 
+
 def get_notion_headers():
     if not NOTION_API_KEY:
         return None
@@ -56,6 +57,7 @@ def get_notion_headers():
         "Content-Type": "application/json",
     }
 
+
 def format_time_mmss(total_seconds):
     if total_seconds < 0:
         total_seconds = 0
@@ -63,20 +65,23 @@ def format_time_mmss(total_seconds):
     seconds = total_seconds % 60
     return f"{minutes:02d}:{seconds:02d}"
 
+
 def compute_statut(score, total_questions, mode):
     if total_questions <= 0:
         return "En cours"
     if mode != "Prod":
         return "En cours"
-    seuil = max(1, int(round(total_questions * 0.75))) if total_questions > 0 else 12
+    seuil = max(1, int(round(total_questions *
+                             0.75))) if total_questions > 0 else 12
     return "Admis" if score >= seuil else "Refusé"
+
 
 def compute_player_profile(score, total_questions, total_time_s):
     if total_questions <= 0:
         return "Oracle en Devenir"
     ratio = score / total_questions
     avg_time = total_time_s / total_questions if total_time_s > 0 else None
-    
+
     if ratio >= 0.85:
         if avg_time is not None and avg_time <= 5:
             return "Esprit Fulgurant"
@@ -87,6 +92,7 @@ def compute_player_profile(score, total_questions, total_time_s):
         return "Éclaireur Instinctif"
     return "Oracle en Devenir"
 
+
 def format_answers_pretty(answers):
     if not isinstance(answers, list):
         return "-"
@@ -95,7 +101,7 @@ def format_answers_pretty(answers):
         if not isinstance(a, dict):
             continue
         qid = a.get("question_id") or a.get("ID_question") or "?"
-        
+
         # Check both choice_letter and selected_index
         choice_letter = a.get("choice_letter")
         if not choice_letter:
@@ -104,61 +110,75 @@ def format_answers_pretty(answers):
                 choice_letter = chr(65 + int(selected_idx))  # 0->A, 1->B, etc
             else:
                 choice_letter = "-"
-        
+
         is_correct = a.get("is_correct")
         status = (a.get("status") or "").lower()
-        
+
         if is_correct is True or status == "correct":
             mark = "✅"
         elif status == "timeout":
             mark = "⏳"
         else:
             mark = "❌"
-        
+
         lines.append(f"{qid} : {choice_letter} {mark}")
     return "\n".join(lines) if lines else "-"
+
 
 def write_to_notion(payload):
     """Write ritual completion data to Notion"""
     if not NOTION_API_KEY or not NOTION_EXAMS_DB_ID:
         print("⚠️ Notion API key or DB ID not configured")
         return {"ok": False, "error": "notion_not_configured"}
-    
+
     try:
         # Extract data from payload
         score = payload.get("score") or 0
         total = payload.get("total") or 15
-        time_seconds = payload.get("time_total_seconds") or payload.get("time_spent_seconds") or 0
-        time_formatted = payload.get("time_formatted") or format_time_mmss(time_seconds)
+        time_seconds = payload.get("time_total_seconds") or payload.get(
+            "time_spent_seconds") or 0
+        time_formatted = payload.get("time_formatted") or format_time_mmss(
+            time_seconds)
         answers = payload.get("answers") or []
-        comment = payload.get("comment_text") or payload.get("feedback_text") or "-"
-        telegram_user_id = str(payload.get("telegram_user_id") or payload.get("user_id") or "unknown")
-        
+        comment = payload.get("comment_text") or payload.get(
+            "feedback_text") or "-"
+        telegram_user_id = str(
+            payload.get("telegram_user_id") or payload.get("user_id")
+            or "unknown")
+
         # Compute profile and status
         profil = compute_player_profile(score, total, time_seconds)
         statut = compute_statut(score, total, "Prod")
         answers_text = format_answers_pretty(answers)
-        
+
         now = datetime.now(timezone.utc).isoformat()
-        
+
         properties = {
             NOTION_FIELDS["joueur_id"]: {
                 "title": [{
                     "type": "text",
-                    "text": {"content": telegram_user_id}
+                    "text": {
+                        "content": telegram_user_id
+                    }
                 }]
             },
             NOTION_FIELDS["mode"]: {
-                "select": {"name": "Prod"}
+                "select": {
+                    "name": "Prod"
+                }
             },
             NOTION_FIELDS["score"]: {
                 "number": int(score)
             },
             NOTION_FIELDS["statut"]: {
-                "select": {"name": statut}
+                "select": {
+                    "name": statut
+                }
             },
             NOTION_FIELDS["date"]: {
-                "date": {"start": now}
+                "date": {
+                    "start": now
+                }
             },
             NOTION_FIELDS["time_s"]: {
                 "number": int(time_seconds)
@@ -166,60 +186,79 @@ def write_to_notion(payload):
             NOTION_FIELDS["time_mmss"]: {
                 "rich_text": [{
                     "type": "text",
-                    "text": {"content": time_formatted}
+                    "text": {
+                        "content": time_formatted
+                    }
                 }]
             },
             NOTION_FIELDS["reponses"]: {
                 "rich_text": [{
                     "type": "text",
-                    "text": {"content": (answers_text or "-")[:1900]}
+                    "text": {
+                        "content": (answers_text or "-")[:1900]
+                    }
                 }]
             },
             NOTION_FIELDS["commentaires"]: {
                 "rich_text": [{
                     "type": "text",
-                    "text": {"content": (comment or "-")[:1900]}
+                    "text": {
+                        "content": (comment or "-")[:1900]
+                    }
                 }]
             },
             NOTION_FIELDS["version_bot"]: {
                 "rich_text": [{
                     "type": "text",
-                    "text": {"content": "rituel_full_v1_http"}
+                    "text": {
+                        "content": "rituel_full_v1_http"
+                    }
                 }]
             },
             NOTION_FIELDS["profil_joueur"]: {
-                "select": {"name": profil}
+                "select": {
+                    "name": profil
+                }
             },
             NOTION_FIELDS["nom_utilisateur"]: {
                 "rich_text": [{
                     "type": "text",
-                    "text": {"content": "-"}
+                    "text": {
+                        "content": "-"
+                    }
                 }]
             },
             NOTION_FIELDS["username_telegram"]: {
                 "rich_text": [{
                     "type": "text",
-                    "text": {"content": "-"}
+                    "text": {
+                        "content": "-"
+                    }
                 }]
             },
         }
-        
+
         url = f"{NOTION_BASE_URL}/pages"
         notion_payload = {
-            "parent": {"database_id": NOTION_EXAMS_DB_ID},
+            "parent": {
+                "database_id": NOTION_EXAMS_DB_ID
+            },
             "properties": properties
         }
-        
+
         headers = get_notion_headers()
-        resp = requests.post(url, headers=headers, json=notion_payload, timeout=20)
-        
+        resp = requests.post(url,
+                             headers=headers,
+                             json=notion_payload,
+                             timeout=20)
+
         if resp.status_code < 300:
             print(f"✅ Notion page created: {resp.json().get('id')}")
             return {"ok": True, "page_id": resp.json().get("id")}
         else:
             print(f"❌ Notion error {resp.status_code}: {resp.text[:500]}")
             return {"ok": False, "error": resp.text[:500]}
-            
+
     except Exception as e:
         print(f"❌ Exception writing to Notion: {e}")
         return {"ok": False, "error": str(e)}
@@ -260,12 +299,10 @@ def version():
     return jsonify({"version": APP_VERSION}), 200
 
 
-
-
-
 @app.get("/ping")
 def ping():
     return jsonify({"ok": True, "version": APP_VERSION}), 200
+
 
 @app.get("/health")
 def health():
@@ -430,11 +467,11 @@ def _airtable_base_id(table_name=""):
     # Si c'est une table de questions, utiliser AIRTABLE_BASE_ID
     # Sinon utiliser AIRTABLE_CORE_BASE_ID pour players/attempts/etc
     questions_table = os.getenv("AIRTABLE_TABLE_ID", "")
-    
+
     # Liste des tables qui vont dans CORE (players/attempts/etc)
     core_tables = [
         "players",
-        "rituel_attempts", 
+        "rituel_attempts",
         "rituel_webapp_payloads",
         "rituel_answers",
         "rituel_feedback",
@@ -444,17 +481,17 @@ def _airtable_base_id(table_name=""):
         os.getenv("AIRTABLE_ANSWERS_TABLE", ""),
         os.getenv("AIRTABLE_FEEDBACK_TABLE", ""),
     ]
-    
+
     # Si c'est la table de questions -> base QUESTIONS
     if table_name == questions_table:
         return os.getenv("AIRTABLE_BASE_ID")
-    
+
     # Si c'est une table de joueurs/tentatives -> base CORE
     if table_name in core_tables:
         core_base = os.getenv("AIRTABLE_CORE_BASE_ID")
         if core_base:
             return core_base
-    
+
     # Fallback sur base questions (ancien comportement)
     return os.getenv("AIRTABLE_BASE_ID")
 
@@ -550,7 +587,7 @@ def __routes():
 def ritual_start():
     if request.method == "OPTIONS":
         return ("", 204)
-    
+
     try:
         print("🔵 DEBUG /ritual/start appelé")
 
@@ -560,16 +597,21 @@ def ritual_start():
         print(f"🔵 telegram_user_id = {telegram_user_id}")
 
         if not telegram_user_id:
-            return jsonify({"ok": False, "error": "missing_telegram_user_id"}), 400
+            return jsonify({
+                "ok": False,
+                "error": "missing_telegram_user_id"
+            }), 400
 
         players_table = os.getenv("AIRTABLE_PLAYERS_TABLE") or "players"
-        attempts_table = os.getenv("AIRTABLE_ATTEMPTS_TABLE") or "rituel_attempts"
+        attempts_table = os.getenv(
+            "AIRTABLE_ATTEMPTS_TABLE") or "rituel_attempts"
         print(
-            f"🔵 players_table = {players_table}, attempts_table = {attempts_table}", flush=True
-        )
+            f"🔵 players_table = {players_table}, attempts_table = {attempts_table}",
+            flush=True)
         print(f"🔵 payload complet = {payload}", flush=True)
 
-        p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
+        p = upsert_player_by_telegram_user_id(players_table,
+                                              str(telegram_user_id))
         if not p.get("ok"):
             return jsonify({
                 "ok": False,
@@ -579,36 +621,40 @@ def ritual_start():
 
         # Translate mode for Airtable (app.js sends "rituel_full_v1" but Airtable expects "PROD" or "TEST")
         raw_mode = payload.get("mode") or payload.get("env") or "PROD"
-        if raw_mode in ("rituel_full_v1", "ritual_full_v1", "rituel_v1", "ritual_v1"):
+        if raw_mode in ("rituel_full_v1", "ritual_full_v1", "rituel_v1",
+                        "ritual_v1"):
             airtable_mode = "PROD"
         elif raw_mode == "TEST":
             airtable_mode = "TEST"
         else:
             airtable_mode = "PROD"  # fallback
-        
+
         print(f"🔵 Mode translation: {raw_mode} → {airtable_mode}", flush=True)
 
         # Create attempt (write only whitelisted raw fields; never computed/system fields)
         fields = {
             "player": [p["record_id"]],
             "started_at":
-            payload.get("started_at") or datetime.now(timezone.utc).isoformat(),
-            "mode": airtable_mode,
-            "status":
-            payload.get("status") or "STARTED",
-            "status_technique": "INIT",  # Champ obligatoire pour Airtable
+            payload.get("started_at")
+            or datetime.now(timezone.utc).isoformat(),
+            "mode":
+            airtable_mode,
         }
         # optional text mirror if you have one; safe to ignore if field absent
         if payload.get("Players"):
             fields["Players"] = payload.get("Players")
 
         print(f"🔵 DEBUG - Player record_id créé: {p['record_id']}")
-        print(f"🔵 DEBUG - Tentative création attempt avec fields: {json.dumps(fields, indent=2)}")
-        
+        print(
+            f"🔵 DEBUG - Tentative création attempt avec fields: {json.dumps(fields, indent=2)}"
+        )
+
         created = airtable_create(attempts_table, fields)
-        
-        print(f"🔵 DEBUG - Réponse airtable_create: {json.dumps(created, indent=2)}")
-        
+
+        print(
+            f"🔵 DEBUG - Réponse airtable_create: {json.dumps(created, indent=2)}"
+        )
+
         if not created.get("ok"):
             print(f"🔴 ERREUR AIRTABLE COMPLÈTE:")
             print(f"🔴 Status Code: {created.get('status')}")
@@ -628,7 +674,7 @@ def ritual_start():
             "attempt_id": created["data"]["id"],
             "player_record_id": p["record_id"],
         })
-    
+
     except Exception as e:
         print(f"🔴 EXCEPTION DANS /ritual/start: {e}")
         import traceback
@@ -696,17 +742,18 @@ def ritual_complete():
         ]:
             if payload.get(k_src) is not None:
                 upd[k_dst] = payload.get(k_src)
-        
+
         # Translate mode for Airtable
         if payload.get("mode") is not None:
             raw_mode = payload.get("mode")
-            if raw_mode in ("rituel_full_v1", "ritual_full_v1", "rituel_v1", "ritual_v1"):
+            if raw_mode in ("rituel_full_v1", "ritual_full_v1", "rituel_v1",
+                            "ritual_v1"):
                 upd["mode"] = "PROD"
             elif raw_mode == "TEST":
                 upd["mode"] = "TEST"
             else:
                 upd["mode"] = "PROD"
-        
+
         attempt_update = airtable_update(attempts_table,
                                          str(attempt_record_id), upd)
 
@@ -756,7 +803,8 @@ def ritual_complete():
     try:
         notion_res = write_to_notion(payload)
         if notion_res.get("ok"):
-            print(f"✅ NOTION WRITE SUCCESS: page_id={notion_res.get('page_id')}")
+            print(
+                f"✅ NOTION WRITE SUCCESS: page_id={notion_res.get('page_id')}")
         else:
             print(f"⚠️ NOTION WRITE FAILED: {notion_res.get('error')}")
     except Exception as e:
