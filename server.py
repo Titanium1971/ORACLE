@@ -96,34 +96,61 @@ def compute_player_profile(score, total_questions, total_time_s):
 
 
 def format_answers_pretty(answers):
+    """Human-readable answers summary for Notion (multiline).
+    Expected item shape (best effort):
+      {q, question_id, selected_letter/choice_letter, selected_index, is_correct, status}
+    """
     if not isinstance(answers, list):
         return "-"
+
+    def _idx_to_letter(idx):
+        try:
+            i = int(idx)
+            if 0 <= i <= 3:
+                return chr(65 + i)
+        except Exception:
+            pass
+        return "-"
+
     lines = []
-    for a in answers:
+    for i, a in enumerate(answers, start=1):
         if not isinstance(a, dict):
             continue
+
+        # Prefer explicit question number coming from the client, fallback to list order.
+        qnum = a.get("q") or a.get("question_number") or i
+        try:
+            qnum_int = int(qnum)
+        except Exception:
+            qnum_int = i
+
         qid = a.get("question_id") or a.get("ID_question") or "?"
 
-        # Check both choice_letter and selected_index
-        choice_letter = a.get("choice_letter")
+        # Prefer explicit letter if the client already computed it (post-shuffle).
+        choice_letter = (
+            a.get("selected_letter")
+            or a.get("choice_letter")
+            or a.get("answer_letter")
+        )
         if not choice_letter:
-            selected_idx = a.get("selected_index")
-            if selected_idx is not None:
-                choice_letter = chr(65 + int(selected_idx))  # 0->A, 1->B, etc
-            else:
-                choice_letter = "-"
+            choice_letter = _idx_to_letter(a.get("selected_index"))
 
         is_correct = a.get("is_correct")
         status = (a.get("status") or "").lower()
 
+        # Marks: only show ❌ when we KNOW it's wrong.
         if is_correct is True or status == "correct":
             mark = "✅"
+        elif is_correct is False or status == "wrong":
+            mark = "❌"
         elif status == "timeout":
             mark = "⏳"
         else:
-            mark = "❌"
+            mark = "•"
 
-        lines.append(f"{qid} : {choice_letter} {mark}")
+        # Ergonomic line: mark first, then Qxx, then ID, then arrow, then choice
+        lines.append(f"{mark} Q{qnum_int:02d} {qid} → {choice_letter}")
+
     return "\n".join(lines) if lines else "-"
 
 
@@ -800,53 +827,6 @@ def ritual_complete():
                 upd["mode"] = "TEST"
             else:
                 upd["mode"] = "PROD"
-
-
-        # --- Ergonomie : packer les réponses dans attempts.answers_json (texte lisible) ---
-        try:
-            _answers = payload.get("answers") or payload.get("rituel_answers") or []
-            _lines = []
-            if isinstance(_answers, list):
-                for _i, _a in enumerate(_answers[:200], start=1):
-                    if not isinstance(_a, dict):
-                        continue
-                    q = _a.get("q") or _a.get("n") or _i
-                    qid = _a.get("question_id") or _a.get("ID_question") or _a.get("id") or ""
-                    sel_letter = _a.get("selected_letter") or _a.get("answer") or _a.get("choice") or ""
-                    sel_index = _a.get("selected_index")
-                    is_correct = _a.get("is_correct")
-                    status_a = (_a.get("status") or "").lower()
-                    if status_a == "timeout":
-                        mark = "⏳"
-                    elif is_correct is True:
-                        mark = "✅"
-                    elif is_correct is False:
-                        mark = "❌"
-                    else:
-                        mark = "•"
-                    if not sel_letter and sel_index is not None:
-                        try:
-                            sel_letter = ["A", "B", "C", "D"][int(sel_index)]
-                        except Exception:
-                            sel_letter = str(sel_index)
-                    _lines.append(f"{mark} Q{int(q):02d} {qid} → {sel_letter}".strip())
-            if _lines:
-                upd["answers_json"] = "\n".join(_lines)
-        except Exception:
-            # On ne casse jamais /ritual/complete pour un souci de formatting
-            pass
-
-        # --- Ergonomie : feedback_text au niveau attempt ---
-        try:
-            fb_text = payload.get("feedback_text") or payload.get("comment_text") or ""
-            if isinstance(fb_text, (dict, list)):
-                fb_text = json.dumps(fb_text, ensure_ascii=False)
-            upd["feedback_text"] = str(fb_text)[:5000]
-        except Exception:
-            pass
-
-        # env BETA (select unique)
-        upd["env"] = "BETA"
 
         attempt_update = airtable_update(attempts_table,
                                          str(attempt_record_id), upd)
