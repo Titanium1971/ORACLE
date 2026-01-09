@@ -1,11 +1,13 @@
-# server.py — Velvet MCP Core (canonical)
+# server.py — Velvet MCP Core (dual-path WebApp, stable)
 # -----------------------------------------------------
-# Goals:
-# - Serve Telegram WebApp from /webapp/ (index.html + static assets)
-# - Provide API endpoints: /api, /health, /version, /questions/random, /ritual/start, /ritual/complete
-# - CORS enabled (Telegram WebApp + browsers)
-# - Airtable random draw using Rand field
-# - Keep behavior stable across Replit Run / Publish (PORT env)
+# Guarantees:
+# - WebApp reachable at BOTH / and /webapp/ (index.html)
+# - Static assets reachable at BOTH /<asset> and /webapp/<asset>
+#   (so relative paths never break)
+# - API endpoints: /api, /health, /version, /questions/random, /ritual/start, /ritual/complete
+# - CORS enabled
+#
+# This file is intentionally self-contained and deterministic.
 
 import os
 import json
@@ -16,18 +18,15 @@ import requests
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
-# -----------------------------------------------------
-# App / Static (CANON)
-# -----------------------------------------------------
-# Serve static assets from the "webapp" folder under /webapp/<asset>
-app = Flask(__name__, static_folder="webapp", static_url_path="/webapp")
+APP_VERSION = "v1.1-dual-webapp-static"
+APP_ENV = os.getenv("ENV", "BETA").upper()
+
+# Serve static assets from /<filename> (root) by default
+app = Flask(__name__, static_folder="webapp", static_url_path="")
 
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-APP_ENV = os.getenv("ENV", "BETA")  # default BETA; can be overridden by ENV
-APP_VERSION = "v1.0-canonical-static-webapp"
-
-print("🟢 SERVER.PY LOADED - canonical static webapp")
+print("🟢 SERVER.PY LOADED -", APP_VERSION, "| ENV=", APP_ENV)
 
 # -----------------------------------------------------
 # CORS headers (explicit)
@@ -48,31 +47,7 @@ def _json():
 
 
 # -----------------------------------------------------
-# Base routes
-# -----------------------------------------------------
-@app.get("/api")
-def api_root():
-    return jsonify({"service": "velvet-mcp-core", "status": "ok", "version": APP_VERSION}), 200
-
-
-@app.get("/")
-def root():
-    # Keep / as a health-ish JSON for quick checks (curl).
-    return jsonify({"service": "velvet-mcp-core", "status": "ok", "version": APP_VERSION}), 200
-
-
-@app.get("/version")
-def version():
-    return jsonify({"version": APP_VERSION}), 200
-
-
-@app.get("/ping")
-def ping():
-    return jsonify({"ok": True, "version": APP_VERSION}), 200
-
-
-# -----------------------------------------------------
-# Telegram WebApp entrypoints
+# WebApp entrypoints (index.html)
 # -----------------------------------------------------
 @app.get("/webapp")
 def webapp_root_no_slash():
@@ -84,8 +59,35 @@ def webapp_root():
     return send_from_directory("webapp", "index.html")
 
 
-# Note: static assets are served automatically at /webapp/<filename> by Flask static_folder/static_url_path.
-# Example: /webapp/style.css -> webapp/style.css
+# Also allow opening WebApp at root
+@app.get("/")
+def root():
+    # If you prefer JSON at /, switch this to api_root below.
+    return send_from_directory("webapp", "index.html")
+
+
+# Serve assets under /webapp/<asset> too (in addition to /<asset>)
+@app.get("/webapp/<path:filename>")
+def webapp_assets(filename):
+    return send_from_directory("webapp", filename)
+
+
+# -----------------------------------------------------
+# API base routes
+# -----------------------------------------------------
+@app.get("/api")
+def api_root():
+    return jsonify({"service": "velvet-mcp-core", "status": "ok", "version": APP_VERSION}), 200
+
+
+@app.get("/version")
+def version():
+    return jsonify({"version": APP_VERSION}), 200
+
+
+@app.get("/ping")
+def ping():
+    return jsonify({"ok": True, "version": APP_VERSION}), 200
 
 
 # -----------------------------------------------------
@@ -171,8 +173,8 @@ def questions_random():
         }), 502
 
     records = recs[:count]
-
     mapped = []
+
     for rec in records:
         f = rec.get("fields", {})
 
@@ -206,11 +208,9 @@ def _airtable_headers():
 
 
 def _airtable_base_id(table_name=""):
-    # BETA: use BETA_AIRTABLE_BASE_ID when available
-    if APP_ENV.upper() == "BETA":
+    if APP_ENV == "BETA":
         return os.getenv("BETA_AIRTABLE_BASE_ID") or os.getenv("AIRTABLE_BASE_ID")
 
-    # PROD: default to AIRTABLE_BASE_ID; allow core base override for core tables
     questions_table = os.getenv("AIRTABLE_TABLE_ID", "")
     core_tables = [
         "players",
@@ -242,7 +242,7 @@ def _airtable_url(table):
 
 
 def _core_table_name(prod_env_var: str, default_name: str, beta_env_var: str = "") -> str:
-    if APP_ENV.upper() == "BETA":
+    if APP_ENV == "BETA":
         if beta_env_var:
             v = os.getenv(beta_env_var)
             if v:
@@ -310,7 +310,7 @@ def ritual_start():
     if not p.get("ok"):
         return jsonify({"ok": False, "error": "player_upsert_failed", "details": p}), 500
 
-    raw_mode = payload.get("mode") or payload.get("env") or (APP_ENV.upper())
+    raw_mode = payload.get("mode") or payload.get("env") or APP_ENV
     if raw_mode in ("rituel_full_v1", "ritual_full_v1", "rituel_v1", "ritual_v1", "rituel_full_v1_http"):
         airtable_mode = "PROD"
     elif raw_mode == "TEST":
@@ -322,15 +322,14 @@ def ritual_start():
         "player": [p["record_id"]],
         "started_at": payload.get("started_at") or datetime.now(timezone.utc).isoformat(),
         "mode": airtable_mode,
-        "env": APP_ENV.upper(),
+        "env": APP_ENV,
         "score_max": int(payload.get("score_max") or payload.get("total") or 15),
         "attempt_label": payload.get("attempt_label") or datetime.now(timezone.utc).strftime("RIT-%Y%m%d-%H%M%S"),
     }
 
     created = airtable_create(attempts_table, fields)
-
-    # Retry without fields that may not exist (safe fallback)
     if not created.get("ok") and created.get("status") == 422:
+        # safe fallback
         fields.pop("attempt_label", None)
         created = airtable_create(attempts_table, fields)
 
@@ -341,14 +340,12 @@ def ritual_start():
     return jsonify({"ok": True, "attempt_id": attempt_id, "player_record_id": p["record_id"], "version": APP_VERSION}), 200
 
 
-# /ritual/complete: keep minimal (log-only) to avoid breaking; you can extend later.
 @app.route("/ritual/complete", methods=["POST", "OPTIONS"])
 def ritual_complete():
     if request.method == "OPTIONS":
         return ("", 204)
 
-    payload = _json()
-    # For now, acknowledge and return ok. You can wire Notion/Airtable writing here if needed.
+    # Keep minimal acknowledgement to avoid breaking flow.
     return jsonify({"ok": True, "version": APP_VERSION}), 200
 
 
@@ -365,7 +362,7 @@ def __routes():
 # -----------------------------------------------------
 @app.errorhandler(404)
 def not_found(_):
-    return jsonify({"error": "not_found"}), 404
+    return "Not Found", 404
 
 
 @app.errorhandler(500)
@@ -373,9 +370,6 @@ def server_error(_):
     return jsonify({"error": "internal_server_error"}), 500
 
 
-# -----------------------------------------------------
-# Entrypoint local (optional)
-# -----------------------------------------------------
 if __name__ == "__main__":
     if os.getenv("RUN_LOCAL_SERVER") == "1":
         port = int(os.getenv("PORT", "5050"))
