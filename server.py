@@ -13,20 +13,15 @@ import re
 from datetime import datetime, timezone
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, redirect
 
 APP_ENV = "BETA"  # forced: Airtable env field only supports BETA
 
 app = Flask(__name__, static_folder='webapp', static_url_path='/webapp')
 
-
-@app.route("/")
-@app.route("/webapp/")
-def serve_webapp():
-    return send_from_directory("webapp", "index.html")
+print(\"🟢 SERVER.PY LOADED - Flask app initialized\")
 
 
-print("🟢 SERVER.PY LOADED - Flask app initialized")
 
 from flask_cors import CORS
 
@@ -292,11 +287,8 @@ def add_cors_headers(response):
 # -----------------------------------------------------
 @app.get("/")
 def root():
-    return jsonify({
-        "service": "velvet-mcp-core",
-        "status": "ok",
-        "version": APP_VERSION,
-    }), 200
+    # Root serves the WebApp (UX). API health remains available on /ping, /health, /version
+    return redirect("/webapp/")
 
 
 @app.get("/webapp/")
