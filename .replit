@@ -35,4 +35,4 @@ externalPort = 80
 
 [deployment]
 deploymentTarget = "gce"
-run = ["sh", "-c", "python3 bot.py"]
+run = ["sh", "-c", "gunicorn --bind=0.0.0.0:5000 server:app"]
