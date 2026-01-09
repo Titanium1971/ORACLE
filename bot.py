@@ -17,6 +17,7 @@ import logging
 import threading
 import asyncio
 import time
+import urllib.parse
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
 
@@ -156,6 +157,20 @@ def format_answers_pretty(answers: List[Dict[str, Any]]) -> str:
 
 
 # ============================================================================
+
+def build_webapp_url() -> str:
+    """Build a stable WebApp URL for Telegram buttons."""
+    v = int(time.time())
+    backend = (os.getenv("WEBAPP_API_BASE", "") or os.getenv("WEBAPP_API", "")).strip()
+    base_webapp = (os.getenv("WEBAPP_URL", "") or "").strip() or "https://oracle--velvet-elite.replit.app/webapp/"
+    if not base_webapp.endswith("/"):
+        base_webapp += "/"
+    params = {"v": str(v)}
+    if backend:
+        params["api"] = backend
+    qs = urllib.parse.urlencode(params, safe=":/")
+    return f"{base_webapp}?{qs}"
+
 #  NOTION API
 # ============================================================================
 
@@ -419,66 +434,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # ✅ retire l'ancien clavier
     await msg.reply_text("⟡", reply_markup=ReplyKeyboardRemove())
 
-    # ✅ URL WebApp (doit être définie avant toute utilisation)
-    v = int(time.time())
-    backend = os.getenv("WEBAPP_API_BASE", "").strip() or os.getenv(
-        "WEBAPP_API", "").strip()
-    base_webapp = os.getenv(
-        "WEBAPP_URL",
-        "").strip() or "https://oracle--velvet-elite.replit.app/webapp/"
-
-    if backend:
-        webapp_url = f"{base_webapp}?api={backend}&v={v}"
-    else:
-        webapp_url = f"{base_webapp}?v={v}"
-
-    if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
-        logger.warning("🚨 START_BLOCKED_BRANCH_EXECUTED 🚨")
-        
-        keyboard_blocked = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(text="Ouvrir Velvet Oracle",
-                                     url=webapp_url)
-            ],
-        ])
-        await msg.reply_text(
-            "🕯️ Tu as déjà franchi l'épreuve officielle, une seule fois suffit.",
-            reply_markup=keyboard_blocked,
-        )
-        return
-
-    # ✅ cache-buster réel
-    v = int(time.time())
-    webapp_url = ("https://oracle--Velvet-elite.replit.app/webapp/"
-                  f"?api=https://oracle--Velvet-elite.replit.app&v={v}")
+    # ✅ URL WebApp (stable)
+    webapp_url = build_webapp_url()
     logger.info("🔗 WEBAPP_URL_SENT=%s", webapp_url)
 
+    # Blocage: si déjà passé en PROD (UX: on affiche quand même un bouton visible)
+
     # ✅ iOS/viewport: définir aussi le bouton Menu du chat vers la WebApp.
-    # Sur certains clients iOS, l'ouverture via le Menu est plus fiable en hauteur.
     try:
         await context.bot.set_chat_menu_button(
             chat_id=msg.chat_id,
-            menu_button=MenuButtonWebApp(text="Velvet Oracle",
-                                         web_app=WebAppInfo(url=webapp_url)))
+            menu_button=MenuButtonWebApp(
+                text="Velvet Oracle",
+                web_app=WebAppInfo(url=webapp_url),
+            ),
+        )
         logger.info("✅ CHAT_MENU_BUTTON_WEBAPP_SET chat_id=%s", msg.chat_id)
     except Exception as e:
         logger.warning("⚠️ set_chat_menu_button failed: %s", e)
 
+    # 🔒 UX garantie : clavier inline visible (WebApp + fallback URL)
     keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                text="Lancer le Rituel Velvet Oracle",
-                web_app=WebAppInfo(url=webapp_url),
-            )
-        ],
-        [
-            # Fallback UX : certains clients/contexts n'affichent pas toujours le bouton WebApp.
-            # Ce lien garantit au moins une action visible (ouvre dans le navigateur).
-            InlineKeyboardButton(text="Ouvrir (fallback)", url=webapp_url)
-        ],
+        [InlineKeyboardButton(text="Lancer le Rituel Velvet Oracle", web_app=WebAppInfo(url=webapp_url))],
+        [InlineKeyboardButton(text="Ouvrir (fallback)", url=webapp_url)],
     ])
-    await msg.reply_text("🕯️ Lorsque tu es prêt, touche le bouton ci-dessous.",
-                         reply_markup=keyboard)
+
+    try:
+        await msg.reply_text("🕯️ Lorsque tu es prêt, touche le bouton ci-dessous.", reply_markup=keyboard)
+        logger.info("✅ START_BUTTON_SENT chat_id=%s user_id=%s", msg.chat_id, joueur_id)
+    except Exception as e:
+        logger.exception("❌ START_BUTTON_SEND_FAILED: %s", e)
+
 
 
 async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
