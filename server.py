@@ -19,7 +19,7 @@ APP_ENV = "BETA"  # forced: Airtable env field only supports BETA
 
 app = Flask(__name__, static_folder='webapp', static_url_path='/webapp')
 
-print(\"🟢 SERVER.PY LOADED - Flask app initialized\")
+print("🟢 SERVER.PY LOADED - Flask app initialized")
 
 
 
@@ -862,7 +862,7 @@ def ritual_complete():
             if payload.get("attempt_label"):
                 # attempt_label helps disambiguate if multiple attempts exist
                 safe_label = str(payload.get("attempt_label")).replace(
-                    '"', '\"')
+                    '"', '"')
                 formula_parts.append(f'{{attempt_label}}="{safe_label}"')
             formula = "AND(" + ",".join(formula_parts) + ")"
             found = airtable_find_latest(attempts_table,
@@ -1155,7 +1155,7 @@ def ritual_complete():
             if "Unknown field name" not in msg:
                 break
             # Extract field name between quotes: Unknown field name: "xxx"
-            m_uf = re.search(r'Unknown field name:\s*\"([^\"]+)\"', msg)
+            m_uf = re.search(r'Unknown field name:\s*"([^"]+)"', msg)
             if not m_uf:
                 break
             bad_field = m_uf.group(1)
