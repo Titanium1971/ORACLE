@@ -433,6 +433,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # ✅ retire l'ancien clavier
     await msg.reply_text("⟡", reply_markup=ReplyKeyboardRemove())
+    # ✅ cache-buster réel + URL WebApp (définie AVANT tout early-return)
+    v = int(time.time())
+    webapp_url = (
+        "https://oracle--Velvet-elite.replit.app/webapp/"
+        f"?api=https://oracle--Velvet-elite.replit.app&v={v}"
+    )
+    logger.info("🔗 WEBAPP_URL=%s", webapp_url)
 
     if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
         keyboard_blocked = InlineKeyboardMarkup([
@@ -443,14 +450,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             reply_markup=keyboard_blocked,
         )
         return
-
-    # ✅ cache-buster réel
-    v = int(time.time())
-    webapp_url = (
-        "https://oracle--Velvet-elite.replit.app/webapp/"
-        f"?api=https://oracle--Velvet-elite.replit.app&v={v}")
-    logger.info("🔗 WEBAPP_URL_SENT=%s", webapp_url)
-
     # ✅ iOS/viewport: définir aussi le bouton Menu du chat vers la WebApp.
     # Sur certains clients iOS, l'ouverture via le Menu est plus fiable en hauteur.
     try:

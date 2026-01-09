@@ -113,11 +113,16 @@ def health():
         air_error = "missing_env"
 
     return jsonify({
-        "status": "ok",
-        "version": APP_VERSION,
-        "utc": datetime.now(timezone.utc).isoformat(),
-        "airtable": {"ok": air_ok, "error": air_error},
-    }), 200
+    "status": "ok",
+    "version": APP_VERSION,
+    "utc": datetime.now(timezone.utc).isoformat(),
+    "airtable": {"ok": air_ok, "error": air_error},
+    "openai": {
+        "has_key": bool(os.getenv("OPENAI_API_KEY")),
+        "model": os.getenv("OPENAI_MODEL") or "",
+    },
+    "env": APP_ENV,
+}), 200
 
 
 # -----------------------------------------------------
@@ -265,6 +270,20 @@ def airtable_create(table, fields):
         data = {"raw": r.text}
     return {"ok": r.status_code < 300, "status": r.status_code, "data": data}
 
+def airtable_update(table, record_id, fields):
+    headers = _airtable_headers()
+    base = _airtable_base_id(table)
+    if not headers or not base:
+        return {"ok": False, "error": "missing_airtable_env"}
+    url = f"{_airtable_url(table)}/{record_id}"
+    r = requests.patch(url, headers=headers, json={"fields": fields}, timeout=20)
+    try:
+        data = r.json()
+    except Exception:
+        data = {"raw": r.text}
+    return {"ok": r.status_code < 300, "status": r.status_code, "data": data}
+
+
 
 def airtable_find_one(table, formula):
     headers = _airtable_headers()
@@ -341,15 +360,202 @@ def ritual_start():
     return jsonify({"ok": True, "attempt_id": attempt_id, "player_record_id": p["record_id"], "version": APP_VERSION}), 200
 
 
-# /ritual/complete: keep minimal (log-only) to avoid breaking; you can extend later.
+# /ritual/complete: write completion + answers (+ optional payload, feedback) to Airtable CORE tables.
 @app.route("/ritual/complete", methods=["POST", "OPTIONS"])
 def ritual_complete():
     if request.method == "OPTIONS":
         return ("", 204)
 
-    payload = _json()
-    # For now, acknowledge and return ok. You can wire Notion/Airtable writing here if needed.
-    return jsonify({"ok": True, "version": APP_VERSION}), 200
+    payload = _json() or {}
+
+    attempt_id = payload.get("attempt_id") or payload.get("attemptId") or payload.get("id")
+    telegram_user_id = payload.get("telegram_user_id") or payload.get("user_id") or payload.get("tg_user_id")
+
+    # We keep the endpoint "best-effort": never hard-crash the ritual UX.
+    if not attempt_id:
+        return jsonify({"ok": False, "error": "missing_attempt_id"}), 400
+
+    # Tables (BETA/PROD aware)
+    players_table  = _core_table_name("AIRTABLE_PLAYERS_TABLE",   "players",                 "BETA_AIRTABLE_PLAYERS_TABLE_ID")
+    attempts_table = _core_table_name("AIRTABLE_ATTEMPTS_TABLE",  "rituel_attempts",         "BETA_AIRTABLE_ATTEMPTS_TABLE_ID")
+    answers_table  = _core_table_name("AIRTABLE_ANSWERS_TABLE",   "rituel_answers",          "BETA_AIRTABLE_ANSWERS_TABLE_ID")
+    payloads_table = _core_table_name("AIRTABLE_PAYLOADS_TABLE",  "rituel_webapp_payloads",  "BETA_AIRTABLE_PAYLOADS_TABLE_ID")
+    feedback_table = _core_table_name("AIRTABLE_FEEDBACK_TABLE",  "rituel_feedback",         "BETA_AIRTABLE_FEEDBACK_TABLE_ID")
+
+    # Upsert player (optional but useful for links)
+    player_record_id = None
+    if telegram_user_id:
+        p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
+        if p.get("ok"):
+            player_record_id = p.get("record_id")
+
+    # --- 1) Update attempt (best-effort, with 422 fallback) ---
+    completed_at = payload.get("completed_at") or datetime.now(timezone.utc).isoformat()
+    score_raw = payload.get("score_raw")
+    score_max = payload.get("score_max")
+    time_total_seconds = payload.get("time_total_seconds")
+
+    attempt_fields_variants = [
+        {
+            "completed_at": completed_at,
+            "score_raw": int(score_raw) if score_raw is not None else None,
+            "score_max": int(score_max) if score_max is not None else None,
+            "time_total_seconds": int(time_total_seconds) if time_total_seconds is not None else None,
+            "status": "COMPLETED",
+        },
+        {
+            "completed_at": completed_at,
+            "score_raw": int(score_raw) if score_raw is not None else None,
+            "score_max": int(score_max) if score_max is not None else None,
+            "time_total_seconds": int(time_total_seconds) if time_total_seconds is not None else None,
+        },
+        {
+            "completed_at": completed_at,
+        },
+    ]
+
+    attempt_updated = False
+    attempt_update_status = None
+    for fields in attempt_fields_variants:
+        # remove None values (Airtable doesn't like explicit nulls sometimes)
+        fields = {k: v for k, v in fields.items() if v is not None}
+        if not fields:
+            continue
+        upd = airtable_update(attempts_table, attempt_id, fields)
+        attempt_update_status = upd.get("status")
+        if upd.get("ok"):
+            attempt_updated = True
+            break
+
+    # --- 2) Store raw payload (optional, best-effort) ---
+    payload_written = False
+    payload_write_status = None
+    try:
+        client_payload = payload.get("client_payload")
+        if client_payload is None:
+            # if not nested, store the full body
+            client_payload = payload
+        payload_json = json.dumps(client_payload, ensure_ascii=False)[:90000]
+
+        fields_variants = [
+            {"exam": [attempt_id], "player": ([player_record_id] if player_record_id else None), "payload_json": payload_json, "created_at": completed_at},
+            {"exam": [attempt_id], "payload_json": payload_json, "created_at": completed_at},
+            {"payload_json": payload_json},
+        ]
+        for fv in fields_variants:
+            fv = {k: v for k, v in fv.items() if v is not None}
+            if not fv:
+                continue
+            cr = airtable_create(payloads_table, fv)
+            payload_write_status = cr.get("status")
+            if cr.get("ok"):
+                payload_written = True
+                break
+    except Exception:
+        pass
+
+    # --- 3) Write answers (best-effort, with progressive field fallback) ---
+    answers_in = payload.get("answers") or []
+    if not isinstance(answers_in, list):
+        answers_in = []
+
+    answers_written = 0
+    answers_failed = 0
+    last_answer_error = None
+
+    for a in answers_in:
+        if not isinstance(a, dict):
+            continue
+
+        qid = a.get("question_id") or a.get("qid") or a.get("id")
+        selected_index = a.get("selected_index")
+        status = a.get("status")
+        is_correct = a.get("is_correct")
+        correct_index = a.get("correct_index")
+
+        # Variants: start rich, then progressively minimal to survive unknown schemas.
+        variants = [
+            {
+                "exam": [attempt_id],
+                "player": ([player_record_id] if player_record_id else None),
+                "question_id": str(qid) if qid is not None else None,
+                "selected_index": int(selected_index) if selected_index is not None else None,
+                "status": str(status) if status is not None else None,
+                "is_correct": bool(is_correct) if is_correct is not None else None,
+                "correct_index": int(correct_index) if correct_index is not None else None,
+                "created_at": completed_at,
+            },
+            {
+                "exam": [attempt_id],
+                "question_id": str(qid) if qid is not None else None,
+                "selected_index": int(selected_index) if selected_index is not None else None,
+                "status": str(status) if status is not None else None,
+            },
+            {
+                "exam": [attempt_id],
+                "question_id": str(qid) if qid is not None else None,
+            },
+        ]
+
+        ok_one = False
+        for fields in variants:
+            fields = {k: v for k, v in fields.items() if v is not None}
+            if not fields:
+                continue
+            cr = airtable_create(answers_table, fields)
+            if cr.get("ok"):
+                ok_one = True
+                answers_written += 1
+                break
+            else:
+                last_answer_error = cr
+                # on 422, try simpler; on other errors, also try simpler once, then give up
+                continue
+
+        if not ok_one:
+            answers_failed += 1
+
+    # --- 4) Optional feedback row ---
+    feedback_written = False
+    feedback_write_status = None
+    feedback_text = payload.get("feedback_text") or ""
+    try:
+        feedback_text = str(feedback_text).strip()
+    except Exception:
+        feedback_text = ""
+
+    if feedback_text:
+        fb_variants = [
+            {"exam": [attempt_id], "player": ([player_record_id] if player_record_id else None), "feedback_text": feedback_text[:1900], "created_at": completed_at},
+            {"exam": [attempt_id], "feedback_text": feedback_text[:1900], "created_at": completed_at},
+            {"feedback_text": feedback_text[:1900]},
+        ]
+        for fv in fb_variants:
+            fv = {k: v for k, v in fv.items() if v is not None}
+            if not fv:
+                continue
+            cr = airtable_create(feedback_table, fv)
+            feedback_write_status = cr.get("status")
+            if cr.get("ok"):
+                feedback_written = True
+                break
+
+    return jsonify({
+        "ok": True,
+        "version": APP_VERSION,
+        "attempt_id": attempt_id,
+        "attempt_updated": attempt_updated,
+        "answers_written": answers_written,
+        "answers_failed": answers_failed,
+        "payload_written": payload_written,
+        "feedback_written": feedback_written,
+        "debug": {
+            "attempt_update_status": attempt_update_status,
+            "payload_write_status": payload_write_status,
+            "feedback_write_status": feedback_write_status,
+            "env": APP_ENV,
+        }
+    }), 200
 
 
 # -----------------------------------------------------
