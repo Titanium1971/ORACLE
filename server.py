@@ -16,7 +16,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 APP_ENV = "BETA"  # forced: Airtable env field only supports BETA
 
-app = Flask(__name__, static_folder='webapp', static_url_path='/webapp')
+app = Flask(__name__, static_folder='webapp', static_url_path='')
 
 print("🟢 SERVER.PY LOADED - Flask app initialized")
 
@@ -282,8 +282,8 @@ def add_cors_headers(response):
 # -----------------------------------------------------
 # Routes de base
 # -----------------------------------------------------
-@app.get("/")
-def root():
+@app.get("/api")
+def api_root():
     return jsonify({
         "service": "velvet-mcp-core",
         "status": "ok",
@@ -291,8 +291,8 @@ def root():
     }), 200
 
 
-@app.get("/webapp/")
-def webapp_index():
+@app.get("/")
+def root():
     """Serve the Telegram WebApp"""
     return send_from_directory('webapp', 'index.html')
 
@@ -1031,16 +1031,7 @@ def ritual_complete():
                         is_corr = False
                 if is_corr is None and ans_letter and corr_letter:
                     is_corr = (ans_letter == corr_letter)
-                status = (a.get("status") or "").lower()
-                if status == "timeout":
-                    mark = "⏳"
-                elif is_corr is True:
-                    mark = "✅"
-                elif is_corr is False:
-                    mark = "❌"
-                else:
-                    mark = "•"
-                out = {"q": qn, "mark": mark, "answer": ans_letter, "correct": corr_letter, "is_correct": is_corr}
+                out = {"q": qn, "answer": ans_letter, "correct": corr_letter, "is_correct": is_corr}
                 if qid is not None:
                     out["question_id"] = qid
                 if out.get("answer") is None and out.get("correct") is None and out.get("is_correct") is None:
@@ -1186,24 +1177,6 @@ def ritual_complete():
 
 
 if __name__ == "__main__":
-    # -----------------------------------------------------
-    # Entrypoint local (DEV ONLY)
-    # -----------------------------------------------------
-    # En environnement Publish/WSGI (gunicorn), ce bloc n'est jamais exécuté.
-    # Pour éviter toute confusion et supprimer l'avertissement "development server",
-    # le lancement via `python3 server.py` est désactivé par défaut.
-    #
-    # Pour lancer en local :
-    #   RUN_LOCAL_SERVER=1 PORT=5000 python3 server.py
-    #
-    if os.getenv("RUN_LOCAL_SERVER",
-                 "").strip() not in ("1", "true", "TRUE", "yes", "YES"):
-        print(
-            "ℹ️ server.py: dev server désactivé (set RUN_LOCAL_SERVER=1 pour lancer en local)."
-        )
-        raise SystemExit(0)
-
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Velvet MCP Core listening on port {port}")
-    # use_reloader=False évite un double lancement (et donc des doubles logs / ports déjà utilisés)
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
