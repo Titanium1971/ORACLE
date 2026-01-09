@@ -433,23 +433,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # ✅ retire l'ancien clavier
     await msg.reply_text("⟡", reply_markup=ReplyKeyboardRemove())
-    # ✅ cache-buster réel + URL WebApp (définie AVANT tout early-return)
+
+    if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
+        await msg.reply_text(
+            "🕯️ Tu as déjà franchi l'épreuve officielle, une seule fois suffit."
+        )
+        return
+
+    # ✅ cache-buster réel
     v = int(time.time())
     webapp_url = (
         "https://oracle--Velvet-elite.replit.app/webapp/"
-        f"?api=https://oracle--Velvet-elite.replit.app&v={v}"
-    )
-    logger.info("🔗 WEBAPP_URL=%s", webapp_url)
+        f"?api=https://oracle--Velvet-elite.replit.app&v={v}")
+    logger.info("🔗 WEBAPP_URL_SENT=%s", webapp_url)
 
-    if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
-        keyboard_blocked = InlineKeyboardMarkup([
-            [InlineKeyboardButton(text="Ouvrir Velvet Oracle", url=webapp_url)],
-        ])
-        await msg.reply_text(
-            "🕯️ Tu as déjà franchi l'épreuve officielle, une seule fois suffit.",
-            reply_markup=keyboard_blocked,
-        )
-        return
     # ✅ iOS/viewport: définir aussi le bouton Menu du chat vers la WebApp.
     # Sur certains clients iOS, l'ouverture via le Menu est plus fiable en hauteur.
     try:
@@ -460,19 +457,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.warning("⚠️ set_chat_menu_button failed: %s", e)
 
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                text="Lancer le Rituel Velvet Oracle",
-                web_app=WebAppInfo(url=webapp_url),
-            )
-        ],
-        [
-            # Fallback UX : certains clients/contexts n'affichent pas toujours le bouton WebApp.
-            # Ce lien garantit au moins une action visible (ouvre dans le navigateur).
-            InlineKeyboardButton(text="Ouvrir (fallback)", url=webapp_url)
-        ],
-    ])
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(text="Lancer le Rituel Velvet Oracle",
+                             web_app=WebAppInfo(url=webapp_url))
+    ]])
     await msg.reply_text("🕯️ Lorsque tu es prêt, touche le bouton ci-dessous.",
                          reply_markup=keyboard)
 
