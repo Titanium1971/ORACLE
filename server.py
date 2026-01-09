@@ -297,6 +297,19 @@ def root():
     return send_from_directory('webapp', 'index.html')
 
 
+
+
+@app.get("/webapp")
+def webapp_root_no_slash():
+    """Serve the Telegram WebApp (backward-compatible)."""
+    return send_from_directory('webapp', 'index.html')
+
+
+@app.get("/webapp/")
+def webapp_root():
+    """Serve the Telegram WebApp (backward-compatible)."""
+    return send_from_directory('webapp', 'index.html')
+
 @app.get("/version")
 def version():
     return jsonify({"version": APP_VERSION}), 200
