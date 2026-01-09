@@ -433,6 +433,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         webapp_url = f"{base_webapp}?v={v}"
 
     if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
+        logger.warning("🚨 START_BLOCKED_BRANCH_EXECUTED 🚨")
+        
         keyboard_blocked = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(text="Ouvrir Velvet Oracle",
