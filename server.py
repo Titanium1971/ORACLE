@@ -5,7 +5,6 @@
 # - /questions/random renvoie des questions prêtes pour le front
 # - Tirage réellement aléatoire via champ "Rand" (Airtable)
 
-from flask import send_from_directory
 import os
 import json
 import random
