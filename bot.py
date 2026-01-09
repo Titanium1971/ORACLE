@@ -457,19 +457,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.warning("⚠️ set_chat_menu_button failed: %s", e)
 
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                text="Lancer le Rituel Velvet Oracle",
-                web_app=WebAppInfo(url=webapp_url),
-            )
-        ],
-        [
-            # Fallback UX : certains clients/contexts n'affichent pas toujours le bouton WebApp.
-            # Ce lien garantit au moins une action visible (ouvre dans le navigateur).
-            InlineKeyboardButton(text="Ouvrir (fallback)", url=webapp_url)
-        ],
-    ])
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(text="Lancer le Rituel Velvet Oracle",
+                             web_app=WebAppInfo(url=webapp_url))
+    ]])
     await msg.reply_text("🕯️ Lorsque tu es prêt, touche le bouton ci-dessous.",
                          reply_markup=keyboard)
 

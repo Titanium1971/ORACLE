@@ -5,7 +5,6 @@
 # - /questions/random renvoie des questions prêtes pour le front
 # - Tirage réellement aléatoire via champ "Rand" (Airtable)
 
-from flask import send_from_directory
 import os
 import json
 import random
@@ -18,13 +17,6 @@ from flask import Flask, jsonify, request, send_from_directory
 APP_ENV = "BETA"  # forced: Airtable env field only supports BETA
 
 app = Flask(__name__, static_folder='webapp', static_url_path='/webapp')
-
-
-@app.route("/")
-@app.route("/webapp/")
-def serve_webapp():
-    return send_from_directory("webapp", "index.html")
-
 
 print("🟢 SERVER.PY LOADED - Flask app initialized")
 
@@ -474,6 +466,7 @@ def _airtable_headers():
     }
 
 
+
 def _airtable_base_id(table_name=""):
     """
     Routing des bases Airtable.
@@ -488,8 +481,7 @@ def _airtable_base_id(table_name=""):
     """
 
     if APP_ENV == "BETA":
-        return os.getenv("BETA_AIRTABLE_BASE_ID") or os.getenv(
-            "AIRTABLE_BASE_ID")
+        return os.getenv("BETA_AIRTABLE_BASE_ID") or os.getenv("AIRTABLE_BASE_ID")
 
     # === PROD (comportement actuel) ===
     questions_table = os.getenv("AIRTABLE_TABLE_ID", "")
@@ -532,9 +524,8 @@ def _airtable_url(table):
     return f"https://api.airtable.com/v0/{base}/{table}"
 
 
-def _core_table_name(prod_env_var: str,
-                     default_name: str,
-                     beta_env_var: str = "") -> str:
+
+def _core_table_name(prod_env_var: str, default_name: str, beta_env_var: str = "") -> str:
     """Retourne le nom/ID de table à utiliser selon ENV.
     - PROD : prod_env_var (si défini) sinon default_name
     - BETA : beta_env_var (si défini) sinon prod_env_var sinon default_name
@@ -548,7 +539,6 @@ def _core_table_name(prod_env_var: str,
         return v2 or default_name
     v = os.getenv(prod_env_var)
     return v or default_name
-
 
 def airtable_create(table, fields):
     headers = _airtable_headers()
@@ -588,6 +578,7 @@ def airtable_find_one(table, formula):
     }
 
 
+
 def airtable_find_latest(table, formula, sort_field="started_at"):
     """Find most recent record matching formula (best effort).
     Uses Airtable sort query params to pick latest by sort_field desc.
@@ -602,10 +593,7 @@ def airtable_find_latest(table, formula, sort_field="started_at"):
         "sort[0][field]": sort_field,
         "sort[0][direction]": "desc",
     }
-    r = requests.get(_airtable_url(table),
-                     headers=headers,
-                     params=params,
-                     timeout=20)
+    r = requests.get(_airtable_url(table), headers=headers, params=params, timeout=20)
     data = r.json()
     recs = data.get("records", []) if isinstance(data, dict) else []
     rec = recs[0] if recs else None
@@ -681,11 +669,8 @@ def ritual_start():
                 "error": "missing_telegram_user_id"
             }), 400
 
-        players_table = _core_table_name("AIRTABLE_PLAYERS_TABLE", "players",
-                                         "BETA_AIRTABLE_PLAYERS_TABLE_ID")
-        attempts_table = _core_table_name("AIRTABLE_ATTEMPTS_TABLE",
-                                          "rituel_attempts",
-                                          "BETA_AIRTABLE_ATTEMPTS_TABLE_ID")
+        players_table = _core_table_name("AIRTABLE_PLAYERS_TABLE", "players", "BETA_AIRTABLE_PLAYERS_TABLE_ID")
+        attempts_table = _core_table_name("AIRTABLE_ATTEMPTS_TABLE", "rituel_attempts", "BETA_AIRTABLE_ATTEMPTS_TABLE_ID")
         print(
             f"🔵 players_table = {players_table}, attempts_table = {attempts_table}",
             flush=True)
@@ -715,21 +700,14 @@ def ritual_start():
         # Create attempt (write only whitelisted raw fields; never computed/system fields)
         fields = {
             "player": [p["record_id"]],
-            "started_at":
-            payload.get("started_at")
-            or datetime.now(timezone.utc).isoformat(),
-            "mode":
-            airtable_mode,
+            "started_at": payload.get("started_at") or datetime.now(timezone.utc).isoformat(),
+            "mode": airtable_mode,
             # BETA: store environment explicitly if the field exists
-            "env":
-            "BETA",
+            "env": "BETA",
             # If score_max is not provided at start, default to 15 (rituel standard)
-            "score_max":
-            int(payload.get("score_max") or payload.get("total") or 15),
+            "score_max": int(payload.get("score_max") or payload.get("total") or 15),
             # Human-readable label for debugging (safe if field exists)
-            "attempt_label":
-            payload.get("attempt_label")
-            or datetime.now(timezone.utc).strftime("RIT-%Y%m%d-%H%M%S"),
+            "attempt_label": payload.get("attempt_label") or datetime.now(timezone.utc).strftime("RIT-%Y%m%d-%H%M%S"),
         }
         # optional text mirror if you have one; safe to ignore if field absent
         if payload.get("Players"):
@@ -743,15 +721,14 @@ def ritual_start():
         created = airtable_create(attempts_table, fields)
 
         # Retry si la table BETA n'a pas le champ "mode"
-        if (not created.get("ok") and created.get("status") == 422
+        if (not created.get("ok")
+                and created.get("status") == 422
                 and isinstance(created.get("data"), dict)
                 and isinstance(created["data"].get("error"), dict)
-                and "Unknown field name" in str(created["data"]["error"].get(
-                    "message", "")) and "mode" in str(
-                        created["data"]["error"].get("message", ""))):
+                and "Unknown field name" in str(created["data"]["error"].get("message", ""))
+                and "mode" in str(created["data"]["error"].get("message", ""))):
             fields.pop("mode", None)
-            print("🟡 Airtable 422 (mode inconnu) → retry sans 'mode'",
-                  flush=True)
+            print("🟡 Airtable 422 (mode inconnu) → retry sans 'mode'", flush=True)
             created = airtable_create(attempts_table, fields)
 
         print(
@@ -796,8 +773,7 @@ def ritual_complete():
 
     payload = _json()
     try:
-        print("🔶 /ritual/complete payload_keys =",
-              sorted(list(payload.keys())))
+        print("🔶 /ritual/complete payload_keys =", sorted(list(payload.keys())))
         if "client_payload" in payload:
             cp = payload.get("client_payload")
             cp_type = type(cp).__name__
@@ -811,30 +787,23 @@ def ritual_complete():
 
     telegram_user_id = payload.get("telegram_user_id") or payload.get(
         "user_id") or payload.get("tg_user_id")
-    attempt_record_id = (payload.get("attempt_record_id")
-                         or payload.get("exam_record_id")
-                         or payload.get("attempt_id")
-                         or payload.get("attemptRecordId")
-                         or payload.get("examRecordId")
-                         or payload.get("attempt_record"))
+    attempt_record_id = (
+        payload.get("attempt_record_id")
+        or payload.get("exam_record_id")
+        or payload.get("attempt_id")
+        or payload.get("attemptRecordId")
+        or payload.get("examRecordId")
+        or payload.get("attempt_record")
+    )
 
     if not telegram_user_id:
         return jsonify({"ok": False, "error": "missing_telegram_user_id"}), 400
 
-    players_table = _core_table_name("AIRTABLE_PLAYERS_TABLE", "players",
-                                     "BETA_AIRTABLE_PLAYERS_TABLE_ID")
-    attempts_table = _core_table_name("AIRTABLE_ATTEMPTS_TABLE",
-                                      "rituel_attempts",
-                                      "BETA_AIRTABLE_ATTEMPTS_TABLE_ID")
-    payloads_table = _core_table_name("AIRTABLE_PAYLOADS_TABLE",
-                                      "rituel_webapp_payloads",
-                                      "BETA_AIRTABLE_PAYLOADS_TABLE_ID")
-    answers_table = _core_table_name("AIRTABLE_ANSWERS_TABLE",
-                                     "rituel_answers",
-                                     "BETA_AIRTABLE_ANSWERS_TABLE_ID")
-    feedback_table = _core_table_name("AIRTABLE_FEEDBACK_TABLE",
-                                      "rituel_feedback",
-                                      "BETA_AIRTABLE_FEEDBACK_TABLE_ID")
+    players_table = _core_table_name("AIRTABLE_PLAYERS_TABLE", "players", "BETA_AIRTABLE_PLAYERS_TABLE_ID")
+    attempts_table = _core_table_name("AIRTABLE_ATTEMPTS_TABLE", "rituel_attempts", "BETA_AIRTABLE_ATTEMPTS_TABLE_ID")
+    payloads_table = _core_table_name("AIRTABLE_PAYLOADS_TABLE", "rituel_webapp_payloads", "BETA_AIRTABLE_PAYLOADS_TABLE_ID")
+    answers_table = _core_table_name("AIRTABLE_ANSWERS_TABLE", "rituel_answers", "BETA_AIRTABLE_ANSWERS_TABLE_ID")
+    feedback_table = _core_table_name("AIRTABLE_FEEDBACK_TABLE", "rituel_feedback", "BETA_AIRTABLE_FEEDBACK_TABLE_ID")
 
     p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
     if not p.get("ok"):
@@ -852,25 +821,21 @@ def ritual_complete():
     }
     raw_res = airtable_create(payloads_table, raw_fields)
 
-    # 2) Resolve attempt record id (client may omit it)
+        # 2) Resolve attempt record id (client may omit it)
     if not attempt_record_id:
         try:
             # Pick the most recent non-completed attempt for this player in BETA.
             formula_parts = [
                 f'{{player}}="{telegram_user_id}"',
                 '{{env}}="BETA"',
-                'OR({completed_at}="", {completed_at}=BLANK())'.replace(
-                    "{completed_at}", "{completed_at}"),
+                'OR({completed_at}="", {completed_at}=BLANK())'.replace("{completed_at}", "{completed_at}"),
             ]
             if payload.get("attempt_label"):
                 # attempt_label helps disambiguate if multiple attempts exist
-                safe_label = str(payload.get("attempt_label")).replace(
-                    '"', '\"')
+                safe_label = str(payload.get("attempt_label")).replace('"', '\"')
                 formula_parts.append(f'{{attempt_label}}="{safe_label}"')
             formula = "AND(" + ",".join(formula_parts) + ")"
-            found = airtable_find_latest(attempts_table,
-                                         formula,
-                                         sort_field="started_at")
+            found = airtable_find_latest(attempts_table, formula, sort_field="started_at")
             rec = found.get("record") if isinstance(found, dict) else None
             if rec and rec.get("id"):
                 attempt_record_id = rec["id"]
@@ -882,15 +847,11 @@ def ritual_complete():
     if attempt_record_id:
         upd = {
             # Always stamp completion time (server-side fallback)
-            "completed_at":
-            payload.get("completed_at")
-            or datetime.now(timezone.utc).isoformat(),
+            "completed_at": payload.get("completed_at") or datetime.now(timezone.utc).isoformat(),
             # Keep existing status semantics; if field doesn't exist in Airtable it will 422 and we retry later if needed
-            "status":
-            payload.get("status") or "COMPLETED",
+            "status": payload.get("status") or "COMPLETED",
             # Mirror env on the attempt row (field exists in BETA schema)
-            "env":
-            "BETA",
+            "env": "BETA",
         }
 
         # Ensure score_max is always present on completion (BETA schema expects it)
@@ -918,8 +879,7 @@ def ritual_complete():
         if upd.get("score_raw") is None and payload.get("score") is not None:
             upd["score_raw"] = payload.get("score")
 
-        if upd.get("time_total_seconds") is None and payload.get(
-                "time_spent_seconds") is not None:
+        if upd.get("time_total_seconds") is None and payload.get("time_spent_seconds") is not None:
             upd["time_total_seconds"] = payload.get("time_spent_seconds")
 
         # Store full answers + feedback directly on the attempt row (BETA schema fields)
@@ -943,10 +903,7 @@ def ritual_complete():
             if not all(isinstance(it, dict) for it in x):
                 return False
             keys = set().union(*(it.keys() for it in x))
-            answerish = {
-                "answer", "selected", "choice", "correct", "correct_index",
-                "is_correct", "question_id", "qid", "id_question"
-            }
+            answerish = {"answer", "selected", "choice", "correct", "correct_index", "is_correct", "question_id", "qid", "id_question"}
             return len(keys.intersection(answerish)) >= 1
 
         def _extract_answers(obj):
@@ -955,12 +912,16 @@ def ritual_complete():
                 return obj
             if not isinstance(obj, dict):
                 return None
-            cand = (obj.get("answers") or obj.get("rituel_answers")
-                    or obj.get("answers_json") or obj.get("answersPayload")
-                    or obj.get("responses")
-                    or (obj.get("results") or {}).get("answers")
-                    or (obj.get("data") or {}).get("answers")
-                    or (obj.get("payload") or {}).get("answers"))
+            cand = (
+                obj.get("answers")
+                or obj.get("rituel_answers")
+                or obj.get("answers_json")
+                or obj.get("answersPayload")
+                or obj.get("responses")
+                or (obj.get("results") or {}).get("answers")
+                or (obj.get("data") or {}).get("answers")
+                or (obj.get("payload") or {}).get("answers")
+            )
             if isinstance(cand, str):
                 try:
                     cand = json.loads(cand)
@@ -978,8 +939,7 @@ def ritual_complete():
                 return obj
             if isinstance(obj, dict):
                 # Prefer obvious keys first
-                for k in ("answers", "responses", "rituel_answers",
-                          "answers_json", "answersPayload"):
+                for k in ("answers", "responses", "rituel_answers", "answers_json", "answersPayload"):
                     v = obj.get(k)
                     if isinstance(v, str):
                         try:
@@ -999,10 +959,12 @@ def ritual_complete():
                         return found
             return None
 
-        answers_for_row = (_extract_answers(payload)
-                           or _extract_answers(client_payload)
-                           or _deep_find_answers(client_payload)
-                           or _deep_find_answers(payload))
+        answers_for_row = (
+            _extract_answers(payload)
+            or _extract_answers(client_payload)
+            or _deep_find_answers(client_payload)
+            or _deep_find_answers(payload)
+        )
 
         # If the WebApp doesn't send answers yet, write a diagnostic payload so Airtable is never empty
         if answers_for_row is None:
@@ -1017,90 +979,64 @@ def ritual_complete():
                 diag["client_payload_len"] = len(client_payload_raw)
                 diag["client_payload_preview"] = client_payload_raw[:1200]
                 if client_payload_parse_error:
-                    diag[
-                        "client_payload_parse_error"] = client_payload_parse_error
+                    diag["client_payload_parse_error"] = client_payload_parse_error
             elif isinstance(client_payload_raw, dict):
-                diag["client_payload_keys"] = sorted(
-                    list(client_payload_raw.keys()))
+                diag["client_payload_keys"] = sorted(list(client_payload_raw.keys()))
             else:
                 diag["client_payload_value"] = str(client_payload_raw)[:300]
 
             # If parsed client_payload is a dict, include its keys too
             if isinstance(client_payload, dict):
-                diag["client_payload_parsed_keys"] = sorted(
-                    list(client_payload.keys()))
+                diag["client_payload_parsed_keys"] = sorted(list(client_payload.keys()))
 
             answers_for_row = diag
-
-
 # Format answers_json for ergonomic reading in Airtable:
-# - add question number (q: 1..N)
-# - keep only the most useful fields when possible
+        # - add question number (q: 1..N)
+        # - keep only the most useful fields when possible
         if answers_for_row is not None:
-
             def _idx_to_letter(x):
                 try:
                     xi = int(x)
-                    return ["A", "B", "C", "D"][xi] if 0 <= xi <= 3 else None
+                    return ["A","B","C","D"][xi] if 0 <= xi <= 3 else None
                 except Exception:
                     return None
 
             def _normalize_answer_item(a, qn):
                 if not isinstance(a, dict):
                     return {"q": qn, "raw": a}
-                qid = a.get("question_id") or a.get("qid") or a.get(
-                    "id_question") or a.get("questionId") or a.get("id")
-                ans = (a.get("answer") or a.get("selected")
-                       or a.get("user_answer") or a.get("choice")
-                       or a.get("selected_option") or a.get("selected_letter")
-                       or a.get("userChoice"))
+                qid = a.get("question_id") or a.get("qid") or a.get("id_question") or a.get("questionId") or a.get("id")
+                ans = (
+                    a.get("answer") or a.get("selected") or a.get("user_answer") or a.get("choice")
+                    or a.get("selected_option") or a.get("selected_letter") or a.get("userChoice")
+                )
                 if ans is None:
-                    ans = a.get(
-                        "selected_index") if "selected_index" in a else (
-                            a.get("answer_index")
-                            if "answer_index" in a else a.get("selectedIndex"))
-                ans_letter = ans.strip().upper() if isinstance(
-                    ans, str) and ans.strip().upper() in (
-                        "A", "B", "C", "D") else _idx_to_letter(ans)
-                corr = (a.get("correct") or a.get("correct_answer")
-                        or a.get("correctOption") or a.get("correct_letter")
-                        or a.get("correctLetter"))
+                    ans = a.get("selected_index") if "selected_index" in a else (a.get("answer_index") if "answer_index" in a else a.get("selectedIndex"))
+                ans_letter = ans.strip().upper() if isinstance(ans, str) and ans.strip().upper() in ("A","B","C","D") else _idx_to_letter(ans)
+                corr = (
+                    a.get("correct") or a.get("correct_answer") or a.get("correctOption")
+                    or a.get("correct_letter") or a.get("correctLetter")
+                )
                 if corr is None:
-                    corr = a.get(
-                        "correct_index") if "correct_index" in a else (
-                            a.get("correctIndex") if "correctIndex" in a else
-                            a.get("answer_correct_index"))
-                corr_letter = corr.strip().upper() if isinstance(
-                    corr, str) and corr.strip().upper() in (
-                        "A", "B", "C", "D") else _idx_to_letter(corr)
+                    corr = a.get("correct_index") if "correct_index" in a else (a.get("correctIndex") if "correctIndex" in a else a.get("answer_correct_index"))
+                corr_letter = corr.strip().upper() if isinstance(corr, str) and corr.strip().upper() in ("A","B","C","D") else _idx_to_letter(corr)
                 is_corr = None
-                for k in ("is_correct", "isCorrect", "correct_flag",
-                          "correctFlag", "ok"):
+                for k in ("is_correct","isCorrect","correct_flag","correctFlag","ok"):
                     if k in a:
                         is_corr = a.get(k)
                         break
                 if isinstance(is_corr, str):
-                    if is_corr.lower() in ("true", "1", "yes", "ok"):
+                    if is_corr.lower() in ("true","1","yes","ok"):
                         is_corr = True
-                    elif is_corr.lower() in ("false", "0", "no"):
+                    elif is_corr.lower() in ("false","0","no"):
                         is_corr = False
                 if is_corr is None and ans_letter and corr_letter:
                     is_corr = (ans_letter == corr_letter)
-                out = {
-                    "q": qn,
-                    "answer": ans_letter,
-                    "correct": corr_letter,
-                    "is_correct": is_corr
-                }
+                out = {"q": qn, "answer": ans_letter, "correct": corr_letter, "is_correct": is_corr}
                 if qid is not None:
                     out["question_id"] = qid
-                if out.get("answer") is None and out.get(
-                        "correct") is None and out.get("is_correct") is None:
+                if out.get("answer") is None and out.get("correct") is None and out.get("is_correct") is None:
                     out["raw_keys"] = sorted(list(a.keys()))
-                    out["raw_preview"] = {
-                        k: a.get(k)
-                        for k in list(a.keys())[:12]
-                    }
+                    out["raw_preview"] = {k: a.get(k) for k in list(a.keys())[:12]}
                 return out
 
             try:
@@ -1116,9 +1052,11 @@ def ritual_complete():
                     # If it's already a JSON string or dict, store as-is (best effort).
                     answers_json_val = answers_for_row
 
-                upd["answers_json"] = json.dumps(answers_json_val,
-                                                 ensure_ascii=False,
-                                                 indent=2)[:98000]
+                upd["answers_json"] = json.dumps(
+                    answers_json_val,
+                    ensure_ascii=False,
+                    indent=2
+                )[:98000]
             except Exception:
                 upd["answers_json"] = str(answers_for_row)[:98000]
 
@@ -1141,18 +1079,15 @@ def ritual_complete():
             else:
                 upd["mode"] = "PROD"
 
-        attempt_update = airtable_update(attempts_table,
-                                         str(attempt_record_id), upd)
+        attempt_update = airtable_update(attempts_table, str(attempt_record_id), upd)
 
         # If BETA table is missing some fields, retry by removing unknown fields (max 5 attempts)
         tries = 0
-        while attempt_update and (not attempt_update.get(
-                "ok")) and attempt_update.get("status") == 422 and tries < 5:
+        while attempt_update and (not attempt_update.get("ok")) and attempt_update.get("status") == 422 and tries < 5:
             tries += 1
             msg = ""
             try:
-                msg = ((attempt_update.get("data") or {}).get("error")
-                       or {}).get("message") or ""
+                msg = ((attempt_update.get("data") or {}).get("error") or {}).get("message") or ""
             except Exception:
                 msg = ""
             if "Unknown field name" not in msg:
@@ -1164,11 +1099,8 @@ def ritual_complete():
             bad_field = m_uf.group(1)
             if bad_field in upd:
                 upd.pop(bad_field, None)
-                print(
-                    f"🟡 Airtable 422 (unknown field '{bad_field}') → retry sans ce champ",
-                    flush=True)
-                attempt_update = airtable_update(attempts_table,
-                                                 str(attempt_record_id), upd)
+                print(f"🟡 Airtable 422 (unknown field '{bad_field}') → retry sans ce champ", flush=True)
+                attempt_update = airtable_update(attempts_table, str(attempt_record_id), upd)
             else:
                 break
 
@@ -1242,6 +1174,7 @@ def ritual_complete():
         "notion_written":
         notion_res.get("ok") if notion_res else False,
     })
+
 
 if __name__ == "__main__":
     # -----------------------------------------------------
