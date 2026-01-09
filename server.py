@@ -5,6 +5,7 @@
 # - /questions/random renvoie des questions prêtes pour le front
 # - Tirage réellement aléatoire via champ "Rand" (Airtable)
 
+from flask import send_from_directory
 import os
 import json
 import random
@@ -12,15 +13,20 @@ import re
 from datetime import datetime, timezone
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory, redirect
+from flask import Flask, jsonify, request, send_from_directory
 
 APP_ENV = "BETA"  # forced: Airtable env field only supports BETA
 
 app = Flask(__name__, static_folder='webapp', static_url_path='/webapp')
 
+
+@app.route("/")
+@app.route("/webapp/")
+def serve_webapp():
+    return send_from_directory("webapp", "index.html")
+
+
 print("🟢 SERVER.PY LOADED - Flask app initialized")
-
-
 
 from flask_cors import CORS
 
@@ -286,13 +292,11 @@ def add_cors_headers(response):
 # -----------------------------------------------------
 @app.get("/")
 def root():
-    # Root serves the WebApp (UX). API health remains available on /ping, /health, /version
-    return redirect("/webapp/")
-
-
-@app.get("/webapp")
-def webapp_redirect():
-    return redirect("/webapp/")
+    return jsonify({
+        "service": "velvet-mcp-core",
+        "status": "ok",
+        "version": APP_VERSION,
+    }), 200
 
 
 @app.get("/webapp/")
@@ -861,7 +865,7 @@ def ritual_complete():
             if payload.get("attempt_label"):
                 # attempt_label helps disambiguate if multiple attempts exist
                 safe_label = str(payload.get("attempt_label")).replace(
-                    '"', '"')
+                    '"', '\"')
                 formula_parts.append(f'{{attempt_label}}="{safe_label}"')
             formula = "AND(" + ",".join(formula_parts) + ")"
             found = airtable_find_latest(attempts_table,
@@ -1154,7 +1158,7 @@ def ritual_complete():
             if "Unknown field name" not in msg:
                 break
             # Extract field name between quotes: Unknown field name: "xxx"
-            m_uf = re.search(r'Unknown field name:\s*"([^"]+)"', msg)
+            m_uf = re.search(r'Unknown field name:\s*\"([^\"]+)\"', msg)
             if not m_uf:
                 break
             bad_field = m_uf.group(1)
