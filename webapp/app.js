@@ -247,7 +247,7 @@ function getQueryParam(name) {
   }
 }
 
-const DEFAULT_API_URL = window.location.origin;
+const DEFAULT_API_URL = "https://velvet-mcp-core--Velvet-elite.replit.app";
 const QUESTIONS_API_URL = (getQueryParam("api") || DEFAULT_API_URL).replace(/\/+$/, "");
 console.log("✅ API BASE =", QUESTIONS_API_URL);
 
@@ -498,31 +498,21 @@ function renderVelvetUnavailableScreen(){
 }
 
 async function ensureQuizData(){
-  let lastError = null;
-
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      console.log(`🔁 Chargement questions (tentative ${attempt})`);
-      const fromApi = await fetchQuestionsFromAPI();
-      if (Array.isArray(fromApi) && fromApi.length === QUESTIONS_COUNT){
-        QUIZ_DATA = fromApi;
-        TOTAL_QUESTIONS = QUESTIONS_COUNT;
-        console.log("✅ QUIZ_DATA chargé depuis l'API :", QUIZ_DATA.length);
-        return;
-      }
-      throw new Error("API: payload inattendu");
-    } catch (e) {
-      lastError = e;
-      console.warn(`⚠️ Échec tentative ${attempt}`, e?.message || e);
-      await new Promise(r => setTimeout(r, 600)); // pause courte
+  try{
+    const fromApi = await fetchQuestionsFromAPI();
+    if (Array.isArray(fromApi) && fromApi.length === QUESTIONS_COUNT){
+      QUIZ_DATA = fromApi;
+      TOTAL_QUESTIONS = QUESTIONS_COUNT;
+      console.log("✅ QUIZ_DATA chargé depuis l'API :", QUIZ_DATA.length);
+      return;
     }
+    throw new Error("API: payload inattendu");
+  } catch (e) {
+    console.error("🚫 Questions API FAILED:", e?.message || e);
+    renderVelvetUnavailableScreen();
+    throw e;
   }
-
-  console.error("🚫 Questions API FAILED après retry:", lastError?.message || lastError);
-  renderVelvetUnavailableScreen();
-  throw lastError;
 }
-
 
 // =========================================================================
 // RITUEL (moteur)
