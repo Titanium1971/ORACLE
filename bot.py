@@ -25,20 +25,11 @@ import requests
 # ✅ backend UNIQUE importé
 import server  # server.py — Velvet MCP Core (questions/random, feedback endpoint éventuel, health, CORS, etc.)
 
-from telegram import (
-    Update,
-    WebAppInfo,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ReplyKeyboardRemove,
-    MenuButtonWebApp)
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    TypeHandler,
-    filters)
+from telegram import (Update, WebAppInfo, InlineKeyboardButton,
+                      InlineKeyboardMarkup, ReplyKeyboardRemove,
+                      MenuButtonWebApp)
+from telegram.ext import (Application, CommandHandler, ContextTypes,
+                          MessageHandler, TypeHandler, filters)
 
 # ============================================================================
 #  CONFIG
@@ -254,19 +245,12 @@ def compute_statut(score: int, total_questions: int, mode: str) -> str:
     return "Admis" if score >= seuil else "Refusé"
 
 
-def create_exam_in_notion(
-    joueur_id: str,
-    mode: str,
-    score: int,
-    total_questions: int,
-    total_time_s: int,
-    time_mmss: str,
-    answers_pretty: str,
-    commentaires: str,
-    profil_joueur: str,
-    nom_utilisateur: str,
-    username_telegram: str,
-    version_bot: str) -> Optional[str]:
+def create_exam_in_notion(joueur_id: str, mode: str, score: int,
+                          total_questions: int, total_time_s: int,
+                          time_mmss: str, answers_pretty: str,
+                          commentaires: str, profil_joueur: str,
+                          nom_utilisateur: str, username_telegram: str,
+                          version_bot: str) -> Optional[str]:
     now = datetime.now(timezone.utc).isoformat()
     statut_value = compute_statut(score, total_questions, mode)
 
@@ -423,7 +407,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     now = time.time()
     last_start = context.user_data.get("last_start_time", 0)
     if now - last_start < 2:  # Less than 2 seconds
-        logger.info("⚠️ Ignoring rapid duplicate /start (%.1fs apart)", now - last_start)
+        logger.info("⚠️ Ignoring rapid duplicate /start (%.1fs apart)",
+                    now - last_start)
         return
     context.user_data["last_start_time"] = now
 
@@ -434,9 +419,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # ✅ retire l'ancien clavier
     await msg.reply_text("⟡", reply_markup=ReplyKeyboardRemove())
 
+    # ✅ URL WebApp (doit être définie avant toute utilisation)
+    v = int(time.time())
+    backend = os.getenv("WEBAPP_API_BASE", "").strip() or os.getenv(
+        "WEBAPP_API", "").strip()
+    base_webapp = os.getenv(
+        "WEBAPP_URL",
+        "").strip() or "https://oracle--velvet-elite.replit.app/webapp/"
+
+    if backend:
+        webapp_url = f"{base_webapp}?api={backend}&v={v}"
+    else:
+        webapp_url = f"{base_webapp}?v={v}"
+
     if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
         keyboard_blocked = InlineKeyboardMarkup([
-            [InlineKeyboardButton(text="Ouvrir Velvet Oracle", url=webapp_url)],
+            [
+                InlineKeyboardButton(text="Ouvrir Velvet Oracle",
+                                     url=webapp_url)
+            ],
         ])
         await msg.reply_text(
             "🕯️ Tu as déjà franchi l'épreuve officielle, une seule fois suffit.",
@@ -446,9 +447,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # ✅ cache-buster réel
     v = int(time.time())
-    webapp_url = (
-        "https://oracle--Velvet-elite.replit.app/webapp/"
-        f"?api=https://oracle--Velvet-elite.replit.app&v={v}")
+    webapp_url = ("https://oracle--Velvet-elite.replit.app/webapp/"
+                  f"?api=https://oracle--Velvet-elite.replit.app&v={v}")
     logger.info("🔗 WEBAPP_URL_SENT=%s", webapp_url)
 
     # ✅ iOS/viewport: définir aussi le bouton Menu du chat vers la WebApp.
@@ -456,7 +456,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await context.bot.set_chat_menu_button(
             chat_id=msg.chat_id,
-            menu_button=MenuButtonWebApp(text="Velvet Oracle", web_app=WebAppInfo(url=webapp_url)))
+            menu_button=MenuButtonWebApp(text="Velvet Oracle",
+                                         web_app=WebAppInfo(url=webapp_url)))
         logger.info("✅ CHAT_MENU_BUTTON_WEBAPP_SET chat_id=%s", msg.chat_id)
     except Exception as e:
         logger.warning("⚠️ set_chat_menu_button failed: %s", e)
@@ -494,16 +495,19 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # ============================================================================
 
 
-async def handle_any_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_any_message(update: Update,
+                             context: ContextTypes.DEFAULT_TYPE):
     """Fallback: if a message carries web_app_data, route it to the WebApp handler."""
     msg = update.effective_message
     try:
         if msg and getattr(msg, "web_app_data", None):
-            logger.info("🟣 WEBAPP_DATA_FALLBACK — routing to handle_webapp_data")
+            logger.info(
+                "🟣 WEBAPP_DATA_FALLBACK — routing to handle_webapp_data")
             return await handle_webapp_data(update, context)
     except Exception:
         logger.exception("WEBAPP_DATA_FALLBACK_FAILED")
     return
+
 
 async def handle_webapp_data(update: Update,
                              context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -554,12 +558,10 @@ async def handle_webapp_data(update: Update,
         score = _first_int(payload, ["score"]) or 0
         total = _first_int(payload, ["total"]) or 15
 
-        total_time_s = _first_int(
-            payload,
-            [
-                "time_total_seconds", "time_spent_seconds",
-                "total_time_seconds", "duration_seconds"
-            ])
+        total_time_s = _first_int(payload, [
+            "time_total_seconds", "time_spent_seconds", "total_time_seconds",
+            "duration_seconds"
+        ])
         if total_time_s is None:
             total_time_s = 0
 
@@ -577,19 +579,18 @@ async def handle_webapp_data(update: Update,
             payload,
             ["feedback_text", "commentaires", "commentaire", "message"]) or "-"
 
-        page_id = create_exam_in_notion(
-            joueur_id=joueur_id,
-            mode=exam_mode_value,
-            score=score,
-            total_questions=total,
-            total_time_s=total_time_s,
-            time_mmss=time_mmss,
-            answers_pretty=answers_pretty,
-            commentaires=commentaires,
-            profil_joueur=profil,
-            nom_utilisateur=full_name,
-            username_telegram=username,
-            version_bot=payload_mode)
+        page_id = create_exam_in_notion(joueur_id=joueur_id,
+                                        mode=exam_mode_value,
+                                        score=score,
+                                        total_questions=total,
+                                        total_time_s=total_time_s,
+                                        time_mmss=time_mmss,
+                                        answers_pretty=answers_pretty,
+                                        commentaires=commentaires,
+                                        profil_joueur=profil,
+                                        nom_utilisateur=full_name,
+                                        username_telegram=username,
+                                        version_bot=payload_mode)
 
         await msg.reply_text("🕯️ Payload reçu. Trace inscrite." if page_id else
                              "❌ Payload reçu, mais Notion a refusé.")
@@ -604,19 +605,18 @@ async def handle_webapp_data(update: Update,
         page_id = get_last_exam_page_for_player(joueur_id)
         if not page_id:
             # Aucun rituel trouvé : on crée une trace minimale (statut=En cours via compute_statut total_questions<=0)
-            created = create_exam_in_notion(
-                joueur_id=joueur_id,
-                mode=exam_mode_value,
-                score=0,
-                total_questions=0,
-                total_time_s=0,
-                time_mmss="00:00",
-                answers_pretty="-",
-                commentaires=feedback_text,
-                profil_joueur="Oracle en Devenir",
-                nom_utilisateur=full_name,
-                username_telegram=username,
-                version_bot="rituel_feedback_v1")
+            created = create_exam_in_notion(joueur_id=joueur_id,
+                                            mode=exam_mode_value,
+                                            score=0,
+                                            total_questions=0,
+                                            total_time_s=0,
+                                            time_mmss="00:00",
+                                            answers_pretty="-",
+                                            commentaires=feedback_text,
+                                            profil_joueur="Oracle en Devenir",
+                                            nom_utilisateur=full_name,
+                                            username_telegram=username,
+                                            version_bot="rituel_feedback_v1")
             await msg.reply_text("🕯️ Feedback noté." if created else
                                  "❌ Feedback reçu, mais Notion a refusé.")
             return
@@ -678,7 +678,8 @@ async def main():
     application.add_handler(CommandHandler("whoami", whoami))
 
     # WebApp data handler - ONLY for web_app_data messages
-    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
+    application.add_handler(
+        MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
 
     # Debug global
     application.add_handler(TypeHandler(Update, debug_any_update), group=-1)
@@ -706,5 +707,6 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except Exception as e:
-        logger.exception("Telegram bot crashed; keeping Flask API alive. Error: %s", e)
+        logger.exception(
+            "Telegram bot crashed; keeping Flask API alive. Error: %s", e)
         flask_thread.join()
