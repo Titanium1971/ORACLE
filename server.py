@@ -96,61 +96,34 @@ def compute_player_profile(score, total_questions, total_time_s):
 
 
 def format_answers_pretty(answers):
-    """Human-readable answers summary for Notion (multiline).
-    Expected item shape (best effort):
-      {q, question_id, selected_letter/choice_letter, selected_index, is_correct, status}
-    """
     if not isinstance(answers, list):
         return "-"
-
-    def _idx_to_letter(idx):
-        try:
-            i = int(idx)
-            if 0 <= i <= 3:
-                return chr(65 + i)
-        except Exception:
-            pass
-        return "-"
-
     lines = []
-    for i, a in enumerate(answers, start=1):
+    for a in answers:
         if not isinstance(a, dict):
             continue
-
-        # Prefer explicit question number coming from the client, fallback to list order.
-        qnum = a.get("q") or a.get("question_number") or i
-        try:
-            qnum_int = int(qnum)
-        except Exception:
-            qnum_int = i
-
         qid = a.get("question_id") or a.get("ID_question") or "?"
 
-        # Prefer explicit letter if the client already computed it (post-shuffle).
-        choice_letter = (
-            a.get("selected_letter")
-            or a.get("choice_letter")
-            or a.get("answer_letter")
-        )
+        # Check both choice_letter and selected_index
+        choice_letter = a.get("choice_letter")
         if not choice_letter:
-            choice_letter = _idx_to_letter(a.get("selected_index"))
+            selected_idx = a.get("selected_index")
+            if selected_idx is not None:
+                choice_letter = chr(65 + int(selected_idx))  # 0->A, 1->B, etc
+            else:
+                choice_letter = "-"
 
         is_correct = a.get("is_correct")
         status = (a.get("status") or "").lower()
 
-        # Marks: only show ❌ when we KNOW it's wrong.
         if is_correct is True or status == "correct":
             mark = "✅"
-        elif is_correct is False or status == "wrong":
-            mark = "❌"
         elif status == "timeout":
             mark = "⏳"
         else:
-            mark = "•"
+            mark = "❌"
 
-        # Ergonomic line: mark first, then Qxx, then ID, then arrow, then choice
-        lines.append(f"{mark} Q{qnum_int:02d} {qid} → {choice_letter}")
-
+        lines.append(f"{qid} : {choice_letter} {mark}")
     return "\n".join(lines) if lines else "-"
 
 
@@ -817,17 +790,84 @@ def ritual_complete():
             if payload.get(k_src) is not None:
                 upd[k_dst] = payload.get(k_src)
 
-        # Translate mode for Airtable
-        if payload.get("mode") is not None:
-            raw_mode = payload.get("mode")
-            if raw_mode in ("rituel_full_v1", "ritual_full_v1", "rituel_v1",
-                            "ritual_v1"):
-                upd["mode"] = "PROD"
-            elif raw_mode == "TEST":
-                upd["mode"] = "TEST"
-            else:
-                upd["mode"] = "PROD"
+        
+        # BETA: ignore "mode" mapping (field may not exist)
+        # and enrich attempt with answers_json + feedback_text
 
+        def _idx_to_letter(i):
+            return ["A", "B", "C", "D"][i] if isinstance(i, int) and 0 <= i <= 3 else None
+
+        # feedback_text (top-level preferred)
+        fb_text = payload.get("feedback_text") or payload.get("comment_text") or ""
+        if not fb_text:
+            fb = payload.get("feedback") or payload.get("rituel_feedback")
+            if isinstance(fb, dict):
+                fb_text = fb.get("text") or ""
+            elif fb is not None:
+                fb_text = str(fb)
+
+        if fb_text is not None:
+            upd["feedback_text"] = str(fb_text)
+
+        # answers_json (top-level preferred)
+        answers_list = payload.get("answers") or payload.get("rituel_answers") or []
+        formatted = []
+        if isinstance(answers_list, list):
+            questions_table_name = os.getenv("AIRTABLE_TABLE_ID", "")
+            for a in answers_list[:200]:
+                if not isinstance(a, dict):
+                    continue
+                qnum = a.get("q")
+                qid = a.get("question_id") or a.get("ID_question")
+                sel_idx = a.get("selected_index")
+                sel_letter = a.get("selected_letter") or a.get("selectedLetter") or _idx_to_letter(sel_idx)
+
+                correct_idx = None
+                correct_letter = None
+                if qid and questions_table_name:
+                    qid_esc = str(qid).replace("'", "\\'")
+                    found = airtable_find_one(questions_table_name, f"{{ID_question}}='{qid_esc}'")
+                    rec = found.get("record") if isinstance(found, dict) else None
+                    fields = rec.get("fields", {}) if isinstance(rec, dict) else {}
+                    ci = fields.get("Correct_index")
+                    if ci is not None:
+                        try:
+                            correct_idx = int(ci)
+                        except Exception:
+                            correct_idx = None
+                correct_letter = _idx_to_letter(correct_idx)
+
+                is_correct = None
+                if isinstance(sel_idx, int) and isinstance(correct_idx, int):
+                    is_correct = (sel_idx == correct_idx)
+
+                mark = "•"
+                if is_correct is True:
+                    mark = "✅"
+                elif is_correct is False:
+                    mark = "❌"
+
+                formatted.append({
+                    "q": int(qnum) if isinstance(qnum, (int, float)) else qnum,
+                    "question_id": qid,
+                    "selected_index": sel_idx,
+                    "selected_letter": sel_letter,
+                    "correct_index": correct_idx,
+                    "correct_letter": correct_letter,
+                    "is_correct": is_correct,
+                    "mark": mark,
+                })
+
+        if formatted:
+            upd["answers_json"] = json.dumps(formatted, ensure_ascii=False, indent=2)
+        else:
+            upd["answers_json"] = json.dumps({
+                "_note": "no answers list in payload",
+                "payload_keys": sorted(list(payload.keys()))[:50]
+            }, ensure_ascii=False, indent=2)
+
+        # Force env BETA (single allowed option)
+        upd["env"] = "BETA"
         attempt_update = airtable_update(attempts_table,
                                          str(attempt_record_id), upd)
 
