@@ -247,8 +247,14 @@ function getQueryParam(name) {
   }
 }
 
-const DEFAULT_API_URL = "https://velvet-mcp-core--Velvet-elite.replit.app";
-const QUESTIONS_API_URL = (getQueryParam("api") || DEFAULT_API_URL).replace(/\/+$/, "");
+const QUESTIONS_API_URL = getQueryParam("api")?.replace(/\/+$/, "");
+
+if (!QUESTIONS_API_URL) {
+  console.error("❌ API manquante — paramètre ?api absent");
+  renderVelvetUnavailableScreen();
+  throw new Error("API_MISSING");
+}
+
 console.log("✅ API BASE =", QUESTIONS_API_URL);
 
 const QUESTIONS_COUNT = 15;
