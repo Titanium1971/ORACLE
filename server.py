@@ -291,6 +291,11 @@ def root():
     return redirect("/webapp/")
 
 
+@app.get("/webapp")
+def webapp_redirect():
+    return redirect("/webapp/")
+
+
 @app.get("/webapp/")
 def webapp_index():
     """Serve the Telegram WebApp"""
