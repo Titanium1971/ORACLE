@@ -13,24 +13,23 @@ import re
 from datetime import datetime, timezone
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory
-
+from flask import Flask, jsonify, request, send_from_directory, redirect
 APP_ENV = "BETA"  # forced: Airtable env field only supports BETA
 
 app = Flask(__name__, static_folder='webapp', static_url_path='/webapp')
-
-
-@app.route("/")
-@app.route("/webapp/")
-def serve_webapp():
-    return send_from_directory("webapp", "index.html")
 
 
 print("🟢 SERVER.PY LOADED - Flask app initialized")
 
 from flask_cors import CORS
 
-CORS(app, resources={r"/*": {"origins": "*"}})
+CORS(app, resources={r"/*": {"origins": "*"}}, allow_headers=["Content-Type","Authorization","X-Telegram-InitData","X-Requested-With","Accept"], methods=["GET","POST","OPTIONS"], max_age=86400)
+
+@app.before_request
+def _cors_preflight():
+    if request.method == "OPTIONS":
+        # Flask-CORS will add the appropriate headers in after_request.
+        return ("", 204)
 
 APP_VERSION = "v0.9-debug-airtable-errors"
 
@@ -283,7 +282,7 @@ def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     response.headers[
-        "Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Telegram-InitData"
+        "Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Telegram-InitData, X-Requested-With, Accept"
     return response
 
 
@@ -292,17 +291,12 @@ def add_cors_headers(response):
 # -----------------------------------------------------
 @app.get("/")
 def root():
-    return jsonify({
-        "service": "velvet-mcp-core",
-        "status": "ok",
-        "version": APP_VERSION,
-    }), 200
-
+    return redirect("/webapp/")
 
 @app.get("/webapp/")
 def webapp_index():
-    """Serve the Telegram WebApp"""
-    return send_from_directory('webapp', 'index.html')
+    return send_from_directory("webapp", "index.html")
+
 
 
 @app.get("/version")
