@@ -58,7 +58,8 @@ The following environment variables are needed for full functionality:
 
 ## Recent Changes
 
-- 2026-01-04: Configured for Replit environment
-  - Updated Flask to serve static files from webapp folder
-  - Modified app.js to use current host as API URL
-  - Set up workflow on port 5000
+- 2026-01-09: Configured for Replit environment
+  - Updated Flask to serve static files from webapp folder at root path
+  - Modified app.js to use window.location.origin as API URL
+  - Set up workflow on port 5000 with gunicorn for production
+  - Deployment configured with autoscale target
