@@ -310,6 +310,13 @@ def webapp_root():
     """Serve the Telegram WebApp (backward-compatible)."""
     return send_from_directory('webapp', 'index.html')
 
+@app.get("/webapp/<path:filename>")
+def webapp_static(filename):
+    """Serve static assets for the Telegram WebApp (css, images, audio)."""
+    return send_from_directory("webapp", filename)
+
+
+
 @app.get("/version")
 def version():
     return jsonify({"version": APP_VERSION}), 200
