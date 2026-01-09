@@ -435,8 +435,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await msg.reply_text("⟡", reply_markup=ReplyKeyboardRemove())
 
     if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
+        keyboard_blocked = InlineKeyboardMarkup([
+            [InlineKeyboardButton(text="Ouvrir Velvet Oracle", url=webapp_url)],
+        ])
         await msg.reply_text(
-            "🕯️ Tu as déjà franchi l'épreuve officielle, une seule fois suffit."
+            "🕯️ Tu as déjà franchi l'épreuve officielle, une seule fois suffit.",
+            reply_markup=keyboard_blocked,
         )
         return
 
