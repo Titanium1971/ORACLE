@@ -317,6 +317,27 @@ function buildApiHeaders(){
   return headers;
 }
 
+
+// =========================================================================
+// ✅ UX latence — Overlay de préparation (rituel)
+// =========================================================================
+function showRitualLoading(){
+  const el = document.getElementById("ritual-loading");
+  if (el){
+    el.classList.remove("hidden");
+    el.classList.add("settling");
+  }
+}
+
+function hideRitualLoading(){
+  const el = document.getElementById("ritual-loading");
+  if (el){
+    el.classList.remove("settling");
+    el.classList.add("hidden");
+  }
+}
+
+
 /** tente de créer un attempt côté backend (visible dans Network) */
 async function ensureAttemptStarted(){
   if (ritualAttemptId) return ritualAttemptId;
@@ -735,19 +756,20 @@ if (btnStartRitualEl) {
       setTimeout(() => window.Telegram?.WebApp?.expand?.(), 250);
     });
 
-    // ✅ attempt_id: on le démarre tôt (Network visible)
-    try { await ensureAttemptStarted(); } catch(e) {}
+    // ✅ UX latence : couvre /ritual/start + /questions/random
+    showRitualLoading();
 
-    questionRemaining = 45;
-    railTotalSeconds = 45;
-    setRailMode("question");
-    setRailProgress(questionRemaining, railTotalSeconds);
-    setTimerMode("question");
-    if (quizTimerEl) quizTimerEl.textContent = `Temps · ${formatSeconds(questionRemaining)}`;
+    try {
+      // 1) attempt_id (peut être lent)
+      try { await ensureAttemptStarted(); } catch(e) {}
 
-    await ensureQuizData();
-    startRituel();
-  });
+      // 2) questions (latence principale)
+      await ensureQuizData();
+    } finally {
+      hideRitualLoading();
+    }
+
+    startRituel();});
 }
 
 function setLiveScoreVisibility(show){
