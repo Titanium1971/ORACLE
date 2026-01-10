@@ -837,119 +837,13 @@ body.font-standard .quiz-option-text{
 
 
 /* ===========================
-   Ritual Loading Overlay
-   - UX d’attente pendant le tirage des questions
-============================ */
-.ritual-loading{
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  background: radial-gradient(circle at top, #121212 0, #050505 55%, #000 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px 14px;
-}
-
-.ritual-loading.hidden{
-  display: none !important;
-}
-
-.ritual-loader{
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 18px;
-  text-align: center;
-}
-
-.ritual-ring{
-  width: 64px;
-  height: 64px;
-  border-radius: 999px;
-  border: 1px solid rgba(200,169,106,.32);
-  border-top-color: rgba(200,169,106,.88);
-  box-shadow: 0 0 26px rgba(200,169,106,.08);
-  animation: ritualSpin 2.2s linear infinite;
-}
-
-.ritual-text{
-  font-size: 11px;
-  letter-spacing: .28em;
-  text-transform: uppercase;
-  font-weight: 700;
-  color: rgba(228,201,140,.70);
-}
-
-@keyframes ritualSpin{
-  to { transform: rotate(360deg); }
-}
-
-
-.ritual-loading.settling .ritual-ring{
-  animation: none;
-  border-top-color: rgba(200,169,106,.55);
-  box-shadow: 0 0 34px rgba(200,169,106,.12);
-}
-
-
-/* ===========================
-   Ritual Closing Overlay
-   =========================== */
-
-.ritual-closing {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 1);
-  z-index: 10000;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition: opacity 420ms ease;
-}
-
-.ritual-closing.hidden {
-  display: none;
-}
-
-.ritual-closing.show {
-  opacity: 1;
-}
-
-.ritual-closing-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  padding: 24px 18px;
-  text-align: center;
-}
-
-.ritual-closing-title {
-  font-size: 14px;
-  letter-spacing: 0.06em;
-  color: rgba(200, 169, 106, 0.78);
-  text-transform: uppercase;
-}
-
-.ritual-closing-subtitle {
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  color: rgba(200, 169, 106, 0.45);
-}
-
-/* ===========================
-   Post Ritual Bottom Sheet
-   - feedback uniquement en sortie
+   Post Ritual Bottom-Sheet (Trace silencieuse)
 =========================== */
-
 .post-ritual-panel{
   position: fixed;
   inset: 0;
-  z-index: 10001;
-  background: rgba(0,0,0,0.72);
+  z-index: 10000;
+  background: rgba(0,0,0,0.78);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   display: flex;
@@ -958,69 +852,27 @@ body.font-standard .quiz-option-text{
   padding: 18px 14px;
 }
 
+.post-ritual-panel.hidden{
+  display:none !important;
+}
+
 .post-ritual-sheet{
-  width: min(520px, 100%);
-  border-radius: 18px;
+  width: min(720px, 100%);
   border: 1px solid rgba(200,169,106,0.28);
-  background: linear-gradient(180deg, rgba(10,10,10,0.96), rgba(0,0,0,0.96));
-  box-shadow: 0 24px 70px rgba(0,0,0,0.75), 0 0 0 1px rgba(255,255,255,0.02);
-  padding: 18px 16px 16px;
-  transform: translateY(18px);
+  border-radius: 18px;
+  background: rgba(0,0,0,0.88);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  overflow: hidden;
+  transform: translateY(14px);
   animation: postSheetIn 220ms ease-out forwards;
 }
 
-@keyframes postSheetIn{
-  to { transform: translateY(0); }
-}
+@keyframes postSheetIn{ to { transform: translateY(0); } }
 
-.post-ritual-title{
-  text-align: center;
-  font-size: 11px;
-  letter-spacing: .28em;
-  text-transform: uppercase;
-  font-weight: 700;
-  color: rgba(228,201,140,0.72);
-  margin-bottom: 10px;
-}
-
-.post-ritual-sub{
-  text-align: center;
-  font-size: 14px;
-  line-height: 1.6;
-  font-weight: 700;
-  color: rgba(245,242,232,0.82);
-  margin-bottom: 12px;
-}
-
-.post-ritual-textarea{
-  width: 100%;
-  resize: none;
-  border-radius: 14px;
-  border: 1px solid rgba(200,169,106,0.22);
-  background: rgba(0,0,0,0.55);
-  padding: 12px 12px;
-  color: rgba(245,242,232,0.86);
-  font-size: 14px;
-  line-height: 1.7;
-  outline: none;
-}
-
-.post-ritual-textarea::placeholder{
-  color: rgba(245,242,232,0.40);
-}
-
-.post-ritual-quit{
-  margin-top: 12px;
-  width: 100%;
-  border-radius: 999px;
-  border: 1px solid rgba(200,169,106,0.35);
-  background: rgba(200,169,106,0.10);
-  padding: 13px 16px;
-  letter-spacing: .16em;
-  text-transform: uppercase;
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-  color: rgba(245,242,232,0.92);
-  box-shadow: 0 12px 28px rgba(0,0,0,.9), 0 0 0 1px rgba(0,0,0,.7);
+/* Avoid "double card" look inside sheet */
+.post-ritual-sheet .feedback-final-card{
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 18px 16px 16px;
 }

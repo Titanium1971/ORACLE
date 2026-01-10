@@ -1,30 +1,6 @@
 console.log("🟣 Velvet build:", "API_ONLY_SCREEN_V1+RITUAL_COMPLETE_HTTP", new Date().toISOString());
 console.log("✅ app.js chargé — VelvetOracle");
 
-/**
- * Safety: always enable the Intro → Chambre transition even if later JS fails.
- * Uses event delegation to avoid null refs.
- */
-document.addEventListener("click", (e) => {
-  const t = e?.target;
-  const btn = t?.closest ? t.closest("#btn-ready") : null;
-  if (!btn) return;
-  try {
-    console.log("🛟 SAFE CLICK btn-ready — Intro → Chambre");
-    const screenIntro = document.querySelector(".screen-intro");
-    const screenChamber = document.querySelector(".screen-chamber");
-    screenIntro?.classList.add("hidden");
-    screenChamber?.classList.remove("hidden");
-    // Optional: prime audio + inject UI if available
-    try { window.primeTickAudio?.(); } catch(_) {}
-    try { window.injectFullscreenSeal?.(); } catch(_) {}
-    try { window.injectFontChooser?.(); } catch(_) {}
-  } catch (err) {
-    console.error("SAFE btn-ready failed:", err);
-  }
-});
-
-
 // =========================================================================
 // Velvet Typo Canon — Normalisation (Morena)
 // =========================================================================
@@ -397,34 +373,27 @@ async function postRitualComplete(payload){
     feedback_text: payload?.comment_text || payload?.feedback_text || ""
   };
 
-    console.log("🟡 HTTP /ritual/complete →", url, "| attempt_id =", attempt_id);
+  console.log("🟡 HTTP /ritual/complete →", url, "| attempt_id =", attempt_id);
 
-  try {
-    const r = await fetch(url, {
-      method: "POST",
-      headers: buildApiHeaders(),
-      body: JSON.stringify(body),
-      cache: "no-store",
-      keepalive: true
-    });
+  const r = await fetch(url, {
+    method: "POST",
+    headers: buildApiHeaders(),
+    body: JSON.stringify(body),
+    cache: "no-store",
+    keepalive: true
+  });
 
-    let respText = "";
-    try { respText = await r.text(); } catch(e){}
+  let respText = "";
+  try { respText = await r.text(); } catch(e){}
 
-    if (!r.ok) {
-      // ✅ Ne jamais casser l'UX de sortie pour une erreur backend (ex: 404 not_found)
-      console.warn("⚠️ /ritual/complete non OK", r.status, respText);
-      return { ok: false, status: r.status, body: respText };
-    }
-
-    console.log("✅ /ritual/complete OK", r.status, respText);
-    return { ok: true, status: r.status, body: respText };
-  } catch (e) {
-    console.warn("⚠️ /ritual/complete fetch error:", e?.message || e);
-    return { ok: false, status: 0, error: String(e?.message || e) };
+  if (!r.ok) {
+    console.error("❌ /ritual/complete FAILED", r.status, respText);
+    throw new Error(`RITUAL_COMPLETE_HTTP_${r.status}`);
   }
-}
 
+  console.log("✅ /ritual/complete OK", r.status, respText);
+  return { ok: true, status: r.status, body: respText };
+}
 
 // ====== API LOAD ======
 function normalizeQuestion(q, idx){
@@ -1153,6 +1122,8 @@ function endRituel(){
 
   if (screenQuiz) screenQuiz.classList.add("hidden");
   if (screenResult) screenResult.classList.remove("hidden");
+  // ✅ Open post-ritual bottom-sheet (feedback) after a short settle
+  setTimeout(() => { try { openPostRitualPanel(); } catch(e){} }, 450);
 }
 
 if (btnGoFeedback) {
@@ -1248,38 +1219,40 @@ if (feedbackFinalSendBtn) {
 
 if (feedbackFinalCloseBtn) {
   feedbackFinalCloseBtn.addEventListener("click", () => {
-    try { primeTickAudio(); } catch(e) {}
-
-    // ✅ UX d'abord : fermeture fluide, sans attendre le réseau
-    try { showRitualClosing(); } catch(e) {}
-
-    // Si pas de payload, on ferme quand même
-    const payload = finalPayload || null;
-
-    // ✅ Fire-and-forget HTTP (ne bloque jamais)
-    if (payload && !finalPayloadHttpSent) {
-      ensureAttemptStarted()
-        .then(() => postRitualComplete(payload))
-        .then((res) => { if (res && res.ok) finalPayloadHttpSent = true; })
-        .catch(() => {});
+    primeTickAudio();
+    if (!finalPayload) {
+      // Even if payload is missing, we still close cleanly.
+      closePostRitualPanel();
+      velvetCloseNow();
+      return;
     }
 
-    // ✅ Fire-and-forget Telegram sendData (ne bloque jamais)
-    if (payload && !finalPayloadSent) {
+    // Close UX immediately (never wait for network)
+    closePostRitualPanel();
+
+    // Best-effort HTTP complete (do not block)
+    if (!finalPayloadHttpSent) {
       try {
-        if (window.Telegram?.WebApp?.sendData) {
-          window.Telegram.WebApp.sendData(JSON.stringify(payload));
-          finalPayloadSent = true;
-          console.log("✅ sendData() envoyé (quit) — payload_len =", JSON.stringify(payload).length);
-        }
-      } catch(e) {}
+        ensureAttemptStarted()
+          .then(() => postRitualComplete(finalPayload))
+          .then(() => { finalPayloadHttpSent = true; })
+          .catch((e) => console.warn("⚠️ /ritual/complete best-effort failed:", e?.message || e));
+      } catch (e) {}
     }
 
-    // ✅ Fermeture WebApp (transition courte)
-    setTimeout(() => {
-      try { window.Telegram?.WebApp?.close?.(); } catch (e) {}
-    }, 320);
+    // Best-effort Telegram sendData (do not block)
+    if (!finalPayloadSent) {
+      try {
+        window.Telegram?.WebApp?.sendData?.(JSON.stringify(finalPayload));
+        finalPayloadSent = true;
+      } catch (e) {
+        console.warn("⚠️ sendData best-effort failed:", e?.message || e);
+      }
+    }
+
+    velvetCloseNow();
   });
 }
+
 
 console.log("✅ Listeners OK — boutons connectés");
