@@ -429,7 +429,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Prevent rapid double-tap (Telegram sometimes sends /start twice)
     now = time.time()
     last_start = context.user_data.get("last_start_time", 0)
-    if now - last_start < 2:  # Less than 2 seconds
+    if now - last_start < 2:
         logger.info("⚠️ Ignoring rapid duplicate /start (%.1fs apart)", now - last_start)
         return
     context.user_data["last_start_time"] = now
@@ -441,38 +441,42 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # ✅ retire l'ancien clavier
     await msg.reply_text("⟡", reply_markup=ReplyKeyboardRemove())
 
-    if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
-        await msg.reply_text(
-            "🕯️ Tu as déjà franchi l'épreuve officielle, une seule fois suffit."
-        )
-        # NOTE: ancien blocage supprimé (on continue pour rafraîchir l’URL WebApp)
-    # ✅ cache-buster réel (évite tout cache Telegram/iOS)
+    # ✅ Toujours construire l’URL WebApp AVANT toute restriction (sinon anciens boutons persistent)
     v = f"{int(time.time())}-{int(time.time_ns() % 1_000_000)}"
     webapp_url = f"{WEBAPP_BASE_URL}?api={API_BASE_URL}&v={v}&src=start"
-logger.info("🔗 WEBAPP_URL_SENT=%s", webapp_url)
+    logger.info("🔗 WEBAPP_URL_SENT=%s", webapp_url)
 
-        # ✅ Purge menu bouton (évite que Telegram conserve un ancien URL)
+    # ✅ Purge menu bouton (évite que Telegram conserve un ancien URL)
     try:
         await context.bot.set_chat_menu_button(chat_id=msg.chat_id, menu_button=MenuButtonDefault())
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("⚠️ set_chat_menu_button default failed: %s", e)
 
-# ✅ iOS/viewport: définir aussi le bouton Menu du chat vers la WebApp.
-    # Sur certains clients iOS, l'ouverture via le Menu est plus fiable en hauteur.
+    # ✅ iOS/viewport: définir aussi le bouton Menu du chat vers la WebApp.
     try:
         await context.bot.set_chat_menu_button(
             chat_id=msg.chat_id,
-            menu_button=MenuButtonWebApp(text="Velvet Oracle", web_app=WebAppInfo(url=webapp_url)))
+            menu_button=MenuButtonWebApp(text="Velvet Oracle", web_app=WebAppInfo(url=webapp_url)),
+        )
         logger.info("✅ CHAT_MENU_BUTTON_WEBAPP_SET chat_id=%s", msg.chat_id)
     except Exception as e:
-        logger.warning("⚠️ set_chat_menu_button failed: %s", e)
+        logger.warning("⚠️ set_chat_menu_button webapp failed: %s", e)
+
+    # ✅ Message informatif si Notion indique un passage antérieur, mais on ne bloque pas (BETA)
+    if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
+        await msg.reply_text("🕯️ Accès au rituel réouvert. (ancienne restriction levée)")
 
     keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton(text="Lancer le Rituel Velvet Oracle",
-                             web_app=WebAppInfo(url=webapp_url))
+        InlineKeyboardButton(
+            text="Lancer le Rituel Velvet Oracle",
+            web_app=WebAppInfo(url=webapp_url),
+        )
     ]])
-    await msg.reply_text("🕯️ Lorsque tu es prêt, touche le bouton ci-dessous.",
-                         reply_markup=keyboard)
+
+    await msg.reply_text(
+        "🕯️ Lorsque tu es prêt, touche le bouton ci-dessous.",
+        reply_markup=keyboard,
+    )
 
 
 async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
