@@ -426,7 +426,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not user or not msg:
         return
 
-    # Prevent rapid double-tap (Telegram sometimes sends /start twice)
+    # Anti double-tap /start
     now = time.time()
     last_start = context.user_data.get("last_start_time", 0)
     if now - last_start < 2:
@@ -441,28 +441,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # ✅ retire l'ancien clavier
     await msg.reply_text("⟡", reply_markup=ReplyKeyboardRemove())
 
-    # ✅ Toujours construire l’URL WebApp AVANT toute restriction (sinon anciens boutons persistent)
+    # ✅ URL WebApp canonique + cache-buster fort
     v = f"{int(time.time())}-{int(time.time_ns() % 1_000_000)}"
     webapp_url = f"{WEBAPP_BASE_URL}?api={API_BASE_URL}&v={v}&src=start"
     logger.info("🔗 WEBAPP_URL_SENT=%s", webapp_url)
 
-    # ✅ Purge menu bouton (évite que Telegram conserve un ancien URL)
+    # ✅ Purge menu bouton (force Telegram à oublier les anciens liens)
     try:
-        await context.bot.set_chat_menu_button(chat_id=msg.chat_id, menu_button=MenuButtonDefault())
+        await context.bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+        logger.info("✅ CHAT_MENU_BUTTON_DEFAULT_SET_GLOBAL")
     except Exception as e:
-        logger.warning("⚠️ set_chat_menu_button default failed: %s", e)
+        logger.warning("⚠️ set_chat_menu_button default global failed: %s", e)
 
-    # ✅ iOS/viewport: définir aussi le bouton Menu du chat vers la WebApp.
+    # ✅ Set GLOBAL menu button (plus fiable que per-chat sur certains clients)
+    try:
+        await context.bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text="Velvet Oracle", web_app=WebAppInfo(url=webapp_url))
+        )
+        logger.info("✅ CHAT_MENU_BUTTON_WEBAPP_SET_GLOBAL")
+    except Exception as e:
+        logger.warning("⚠️ set_chat_menu_button webapp global failed: %s", e)
+
+    # ✅ Optional: try per-chat too (best effort)
     try:
         await context.bot.set_chat_menu_button(
             chat_id=msg.chat_id,
-            menu_button=MenuButtonWebApp(text="Velvet Oracle", web_app=WebAppInfo(url=webapp_url)),
+            menu_button=MenuButtonWebApp(text="Velvet Oracle", web_app=WebAppInfo(url=webapp_url))
         )
         logger.info("✅ CHAT_MENU_BUTTON_WEBAPP_SET chat_id=%s", msg.chat_id)
     except Exception as e:
-        logger.warning("⚠️ set_chat_menu_button webapp failed: %s", e)
+        logger.warning("⚠️ set_chat_menu_button webapp chat failed: %s", e)
 
-    # ✅ Message informatif si Notion indique un passage antérieur, mais on ne bloque pas (BETA)
+    # ✅ On n'empêche jamais l'accès au rituel ici (BETA): message info seulement
     if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
         await msg.reply_text("🕯️ Accès au rituel réouvert. (ancienne restriction levée)")
 
