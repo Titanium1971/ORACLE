@@ -24,6 +24,20 @@ from flask_cors import CORS
 
 CORS(app, resources={r"/*": {"origins": "*"}})
 
+# -----------------------------------------------------
+# ✅ Request logger (debug) — traces whether devices hit this backend
+# -----------------------------------------------------
+@app.before_request
+def _log_incoming_request():
+    try:
+        init_data = request.headers.get("X-Telegram-InitData", "") or ""
+        print(
+            f"🧭 REQ {request.method} {request.path} | qs={request.query_string.decode('utf-8','ignore')[:200]} | initDataLen={len(init_data)}",
+            flush=True
+        )
+    except Exception:
+        pass
+
 APP_VERSION = "v0.9-debug-airtable-errors"
 
 # ============================================================================
