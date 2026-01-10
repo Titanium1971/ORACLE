@@ -325,7 +325,7 @@ function showRitualLoading(){
   const el = document.getElementById("ritual-loading");
   if (el){
     el.classList.remove("hidden");
-    el.classList.add("settling");
+    el.classList.remove("settling"); // ✅ important : laisse l’animation tourner
   }
 }
 
