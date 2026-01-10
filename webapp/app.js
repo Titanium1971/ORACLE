@@ -1,3 +1,19 @@
+
+// =========================
+// Ritual Loading helpers (patched)
+// =========================
+function showRitualLoading(){
+  const el = document.getElementById("ritual-loading");
+  if (!el) return;
+  el.classList.remove("hidden");
+  el.classList.remove("settling"); // ensure halo animates
+}
+function hideRitualLoading(){
+  const el = document.getElementById("ritual-loading");
+  if (!el) return;
+  el.classList.add("hidden");
+}
+
 console.log("🟣 Velvet build:", "API_ONLY_SCREEN_V1+RITUAL_COMPLETE_HTTP", new Date().toISOString());
 console.log("✅ app.js chargé — VelvetOracle");
 
