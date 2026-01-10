@@ -247,14 +247,8 @@ function getQueryParam(name) {
   }
 }
 
-const QUESTIONS_API_URL = getQueryParam("api")?.replace(/\/+$/, "");
-
-if (!QUESTIONS_API_URL) {
-  console.error("❌ API manquante — paramètre ?api absent");
-  renderVelvetUnavailableScreen();
-  throw new Error("API_MISSING");
-}
-
+const DEFAULT_API_URL = "https://oracle--velvet-elite.replit.app";
+const QUESTIONS_API_URL = (getQueryParam("api") || DEFAULT_API_URL).replace(/\/+$/, "");
 console.log("✅ API BASE =", QUESTIONS_API_URL);
 
 const QUESTIONS_COUNT = 15;
