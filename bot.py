@@ -46,12 +46,12 @@ from telegram.ext import (
 
 BOT_VERSION = "webapp_prod_v7_menu_button_fullheight"
 
+
 # ----------------------------------------------------------------------------
 # ✅ Canonical URLs (single source of truth)
 # ----------------------------------------------------------------------------
 WEBAPP_BASE_URL = "https://oracle--velvet-elite.replit.app/webapp/"
 API_BASE_URL = "https://oracle--velvet-elite.replit.app"
-
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv(
     "TELEGRAM_F1_TOKEN")
@@ -441,13 +441,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # ✅ retire l'ancien clavier
     await msg.reply_text("⟡", reply_markup=ReplyKeyboardRemove())
 
-    # ✅ cache-buster réel (évite tout cache Telegram/iOS et tout ancien bouton)
+    if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
+        await msg.reply_text(
+            "🕯️ Tu as déjà franchi l'épreuve officielle, une seule fois suffit."
+        )
+        # NOTE: ancien blocage supprimé (on continue pour rafraîchir l’URL WebApp)
+    # ✅ cache-buster réel (évite tout cache Telegram/iOS)
     v = f"{int(time.time())}-{int(time.time_ns() % 1_000_000)}"
-    webapp_url = f"{WEBAPP_BASE_URL}?api={API_BASE_URL}&v={v}"
-    logger.info("🔗 WEBAPP_URL_SENT=%s", webapp_url)
+    webapp_url = f"{WEBAPP_BASE_URL}?api={API_BASE_URL}&v={v}&src=start"
+logger.info("🔗 WEBAPP_URL_SENT=%s", webapp_url)
 
-    # ✅ Toujours mettre à jour le menu bouton (même si restrictions Notion),
-    # sinon certains utilisateurs restent bloqués sur un ancien URL (ex: api=<old-backend>).
+        # ✅ Purge menu bouton (évite que Telegram conserve un ancien URL)
+    try:
+        await context.bot.set_chat_menu_button(chat_id=msg.chat_id, menu_button=MenuButtonDefault())
+    except Exception:
+        pass
+
+# ✅ iOS/viewport: définir aussi le bouton Menu du chat vers la WebApp.
+    # Sur certains clients iOS, l'ouverture via le Menu est plus fiable en hauteur.
     try:
         await context.bot.set_chat_menu_button(
             chat_id=msg.chat_id,
@@ -455,11 +466,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info("✅ CHAT_MENU_BUTTON_WEBAPP_SET chat_id=%s", msg.chat_id)
     except Exception as e:
         logger.warning("⚠️ set_chat_menu_button failed: %s", e)
-
-    # ✅ Si Notion dit "déjà fait", on n'empêche PAS l'accès au rituel (BETA),
-    # on affiche seulement un message sobre.
-    if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
-        await msg.reply_text("🕯️ Accès au rituel réouvert. (ancienne restriction levée)")
 
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton(text="Lancer le Rituel Velvet Oracle",
