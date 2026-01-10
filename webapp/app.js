@@ -1,5 +1,7 @@
 console.log("🟣 Velvet build:", "API_ONLY_SCREEN_V1+RITUAL_COMPLETE_HTTP", new Date().toISOString());
 console.log("✅ app.js chargé — VelvetOracle");
+console.log("🟢 APP_FIXED_V3_LOADED", new Date().toISOString());
+
 
 // =========================================================================
 // Velvet Typo Canon — Normalisation (Morena)
