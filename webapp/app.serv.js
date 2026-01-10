@@ -317,6 +317,27 @@ function buildApiHeaders(){
   return headers;
 }
 
+
+// =========================================================================
+// ✅ UX latence — Overlay de préparation (rituel)
+// =========================================================================
+function showRitualLoading(){
+  const el = document.getElementById("ritual-loading");
+  if (el){
+    el.classList.remove("hidden");
+    el.classList.remove("settling"); // ✅ important : laisse l’animation tourner
+  }
+}
+
+function hideRitualLoading(){
+  const el = document.getElementById("ritual-loading");
+  if (el){
+    el.classList.remove("settling");
+    el.classList.add("hidden");
+  }
+}
+
+
 /** tente de créer un attempt côté backend (visible dans Network) */
 async function ensureAttemptStarted(){
   if (ritualAttemptId) return ritualAttemptId;
@@ -735,19 +756,20 @@ if (btnStartRitualEl) {
       setTimeout(() => window.Telegram?.WebApp?.expand?.(), 250);
     });
 
-    // ✅ attempt_id: on le démarre tôt (Network visible)
-    try { await ensureAttemptStarted(); } catch(e) {}
+    // ✅ UX latence : couvre /ritual/start + /questions/random
+    showRitualLoading();
 
-    questionRemaining = 45;
-    railTotalSeconds = 45;
-    setRailMode("question");
-    setRailProgress(questionRemaining, railTotalSeconds);
-    setTimerMode("question");
-    if (quizTimerEl) quizTimerEl.textContent = `Temps · ${formatSeconds(questionRemaining)}`;
+    try {
+      // 1) attempt_id (peut être lent)
+      try { await ensureAttemptStarted(); } catch(e) {}
 
-    await ensureQuizData();
-    startRituel();
-  });
+      // 2) questions (latence principale)
+      await ensureQuizData();
+    } finally {
+      hideRitualLoading();
+    }
+
+    startRituel();});
 }
 
 function setLiveScoreVisibility(show){
@@ -1122,22 +1144,14 @@ function endRituel(){
 
   if (screenQuiz) screenQuiz.classList.add("hidden");
   if (screenResult) screenResult.classList.remove("hidden");
-  // ✅ Feedback intégré : on supprime le saut et on exige un texte avant envoi
-  if (btnGoFeedback) btnGoFeedback.classList.add("hidden");
-  if (feedbackFinalSendBtn) feedbackFinalSendBtn.disabled = true;
-  if (feedbackFinalTextEl) feedbackFinalTextEl.readOnly = false;
-  if (feedbackFinalSendBtn) feedbackFinalSendBtn.classList.remove("hidden");
-  if (feedbackFinalMessageEl) feedbackFinalMessageEl.classList.add("hidden");
-  if (feedbackFinalSignatureEl) feedbackFinalSignatureEl.classList.add("hidden");
-  if (feedbackFinalCloseBtn) feedbackFinalCloseBtn.classList.add("hidden");
 }
 
 if (btnGoFeedback) {
-  // Feedback est désormais intégré à l’écran Résultats (flux sans saut)
-  btnGoFeedback.classList.add("hidden");
-}
-
-);
+  btnGoFeedback.addEventListener("click", () => {
+    primeTickAudio();
+    if (screenResult) screenResult.classList.add("hidden");
+    if (screenFeedbackFinal) screenFeedbackFinal.classList.remove("hidden");
+  });
 }
 
 if (feedbackFinalSendBtn && feedbackFinalTextEl) {
@@ -1174,9 +1188,6 @@ if (feedbackFinalSendBtn) {
     finalPayload.telegram_user_id = ritualPlayerTelegramUserId || getTelegramUserId() || null;
 
 
-    // ✅ UX: attente d’enregistrement
-    showRitualClosing("Nous enregistrons votre résultat…", "Un instant.");
-
     // ✅ 1) HTTP complete (Network visible)
     if (!finalPayloadHttpSent) {
       try {
@@ -1185,17 +1196,8 @@ if (feedbackFinalSendBtn) {
         finalPayloadHttpSent = true;
       } catch (e) {
         console.error("❌ HTTP complete failed (feedback stage):", e?.message || e);
-        if (feedbackFinalMessageEl){
-          feedbackFinalMessageEl.classList.remove("hidden");
-          feedbackFinalMessageEl.innerHTML = "Transmission instable. Réessaie dans un instant.";
-        }
-        if (feedbackFinalSendBtn) feedbackFinalSendBtn.disabled = false;
-        if (feedbackFinalTextEl) feedbackFinalTextEl.readOnly = false;
       }
     }
-
-    // ✅ On retire l’écran d’attente (succès ou échec)
-    hideRitualClosing();
 
     // ✅ 2) Telegram sendData (bot)
     console.log("🔍 DEBUG - window.Telegram exists:", !!window.Telegram);
