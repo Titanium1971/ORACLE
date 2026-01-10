@@ -891,3 +891,51 @@ body.font-standard .quiz-option-text{
   border-top-color: rgba(200,169,106,.55);
   box-shadow: 0 0 34px rgba(200,169,106,.12);
 }
+
+
+/* ===========================
+   Ritual Closing Overlay
+   =========================== */
+
+.ritual-closing {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 1);
+  z-index: 10000;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 420ms ease;
+}
+
+.ritual-closing.hidden {
+  display: none;
+}
+
+.ritual-closing.show {
+  opacity: 1;
+}
+
+.ritual-closing-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px 18px;
+  text-align: center;
+}
+
+.ritual-closing-title {
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  color: rgba(200, 169, 106, 0.78);
+  text-transform: uppercase;
+}
+
+.ritual-closing-subtitle {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: rgba(200, 169, 106, 0.45);
+}

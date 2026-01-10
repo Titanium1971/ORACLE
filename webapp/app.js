@@ -200,6 +200,26 @@ function hideRitualLoading(){
   el.setAttribute("aria-hidden", "true");
 }
 
+function showRitualClosing() {
+  const el = document.getElementById("ritual-closing");
+  if (!el) return;
+  el.classList.remove("hidden");
+  // Force reflow to ensure transition triggers
+  void el.offsetHeight;
+  el.classList.add("show");
+}
+
+function hideRitualClosing() {
+  const el = document.getElementById("ritual-closing");
+  if (!el) return;
+  el.classList.remove("show");
+  // After transition, hide
+  setTimeout(() => {
+    el.classList.add("hidden");
+  }, 450);
+}
+
+
 function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 
 async function finishRitualLoading({ minMs = 650, settleMs = 900 } = {}){
@@ -1321,6 +1341,9 @@ if (feedbackFinalSendBtn) {
 
 if (feedbackFinalCloseBtn) {
   feedbackFinalCloseBtn.addEventListener("click", async () => {
+    showRitualClosing();
+    feedbackFinalCloseBtn.disabled = true;
+
     primeTickAudio();
     if (!finalPayload) return;
 
@@ -1354,7 +1377,8 @@ if (feedbackFinalCloseBtn) {
       }
     }
 
-    try { window.Telegram?.WebApp?.close?.(); } catch (e) {
+        await new Promise(r => setTimeout(r, 900));
+try { window.Telegram?.WebApp?.close?.(); } catch (e) {
       console.warn("⚠️ close() indisponible :", e);
     }
   });
