@@ -1,6 +1,7 @@
 console.log("🟣 Velvet build:", "API_ONLY_SCREEN_V1+RITUAL_COMPLETE_HTTP", new Date().toISOString());
 console.log("✅ app.js chargé — VelvetOracle");
 console.log("🟢 APP_FIXED_V3_LOADED", new Date().toISOString());
+console.log("🟢 APP_FIXED_V4_LOADER_OK", new Date().toISOString());
 
 
 // =========================================================================
@@ -322,6 +323,9 @@ function buildApiHeaders(){
 // =========================================================================
 // ✅ UX latence — Overlay de préparation (rituel)
 // =========================================================================
+// =========================================================================
+// ✅ UX latence — Overlay de préparation (rituel) (V4)
+// =========================================================================
 function showRitualLoading(){
   const el = document.getElementById("ritual-loading");
   if (!el) return;
@@ -333,9 +337,6 @@ function hideRitualLoading(){
   if (!el) return;
   el.classList.add("hidden");
 }
-
-
-
 /** tente de créer un attempt côté backend (visible dans Network) */
 async function ensureAttemptStarted(){
   if (ritualAttemptId) return ritualAttemptId;
