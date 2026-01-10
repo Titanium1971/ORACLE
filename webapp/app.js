@@ -1,12 +1,5 @@
 console.log("🟣 Velvet build:", "API_ONLY_SCREEN_V1+RITUAL_COMPLETE_HTTP", new Date().toISOString());
 console.log("✅ app.js chargé — VelvetOracle");
-// ===========================
-// Ritual loading debug (local test only)
-// ===========================
-const DEBUG_RITUAL_LATENCY = false; // true = simule une latence avant le tirage
-const DEBUG_RITUAL_LATENCY_MS = 2500;
-
-
 
 // =========================================================================
 // Velvet Typo Canon — Normalisation (Morena)
@@ -171,66 +164,6 @@ function injectFontChooser() {
   startBtn.parentNode.insertBefore(wrap, startBtn);
 
   applyFontMode(getSavedFontMode());
-
-// =========================================================================
-// Ritual Loading Overlay (latence questions)
-// =========================================================================
-let __ritualLoadingShownAt = 0;
-
-function showRitualLoading(){
-  const el = document.getElementById("ritual-loading");
-  if (!el) return;
-  __ritualLoadingShownAt = Date.now();
-  el.classList.remove("hidden");
-  el.classList.remove("settling");
-  el.setAttribute("aria-hidden", "false");
-}
-
-function setRitualLoadingSettling(){
-  const el = document.getElementById("ritual-loading");
-  if (!el) return;
-  el.classList.add("settling");
-}
-
-function hideRitualLoading(){
-  const el = document.getElementById("ritual-loading");
-  if (!el) return;
-  el.classList.add("hidden");
-  el.classList.remove("settling");
-  el.setAttribute("aria-hidden", "true");
-}
-
-function showRitualClosing() {
-  const el = document.getElementById("ritual-closing");
-  if (!el) return;
-  el.classList.remove("hidden");
-  // Force reflow to ensure transition triggers
-  void el.offsetHeight;
-  el.classList.add("show");
-}
-
-function hideRitualClosing() {
-  const el = document.getElementById("ritual-closing");
-  if (!el) return;
-  el.classList.remove("show");
-  // After transition, hide
-  setTimeout(() => {
-    el.classList.add("hidden");
-  }, 450);
-}
-
-
-function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
-
-async function finishRitualLoading({ minMs = 650, settleMs = 900 } = {}){
-  const elapsed = Date.now() - (__ritualLoadingShownAt || Date.now());
-  const waitMin = Math.max(0, minMs - elapsed);
-  if (waitMin) await sleep(waitMin);
-  setRitualLoadingSettling();
-  if (settleMs) await sleep(settleMs);
-  hideRitualLoading();
-}
-
 }
 
 // =========================================================================
@@ -353,70 +286,6 @@ try {
 applyFontMode(getSavedFontMode());
 
 // =========================================================================
-// Ritual Loading Overlay (latence questions)
-// =========================================================================
-let __ritualLoadingShownAt = 0;
-
-function showRitualLoading(){
-  const el = document.getElementById("ritual-loading");
-  if (!el) return;
-  __ritualLoadingShownAt = Date.now();
-  el.classList.remove("hidden");
-  el.classList.remove("settling");
-  el.setAttribute("aria-hidden", "false");
-}
-
-function setRitualLoadingSettling(){
-  const el = document.getElementById("ritual-loading");
-  if (!el) return;
-  el.classList.add("settling");
-}
-
-function hideRitualLoading(){
-  const el = document.getElementById("ritual-loading");
-  if (!el) return;
-  el.classList.add("hidden");
-  el.classList.remove("settling");
-  el.setAttribute("aria-hidden", "true");
-}
-
-function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
-
-async function finishRitualLoading({ minMs = 650, settleMs = 900 } = {}){
-  const elapsed = Date.now() - (__ritualLoadingShownAt || Date.now());
-  const waitMin = Math.max(0, minMs - elapsed);
-  if (waitMin) await sleep(waitMin);
-  setRitualLoadingSettling();
-  if (settleMs) await sleep(settleMs);
-  hideRitualLoading();
-}
-
-
-// =========================================================================
-// Post Ritual Bottom Sheet (feedback en sortie)
-// =========================================================================
-function openPostRitualPanel(){
-  const panel = document.getElementById("post-ritual-panel");
-  if (!panel) return;
-  panel.classList.remove("hidden");
-  panel.setAttribute("aria-hidden", "false");
-  const ta = document.getElementById("post-ritual-text");
-  if (ta) {
-    ta.readOnly = false;
-    // Ne pas effacer si l’utilisateur a déjà commencé à écrire (sécurité)
-    if (!ta.dataset.voTouched) ta.value = "";
-    setTimeout(() => { try { ta.focus(); } catch(_){} }, 50);
-  }
-}
-
-function closePostRitualPanel(){
-  const panel = document.getElementById("post-ritual-panel");
-  if (!panel) return;
-  panel.classList.add("hidden");
-  panel.setAttribute("aria-hidden", "true");
-}
-
-// =========================================================================
 // ✅ RITUEL: identité session / attempt_id (HTTP visible)
 // =========================================================================
 let ritualAttemptId = null;
@@ -504,27 +373,34 @@ async function postRitualComplete(payload){
     feedback_text: payload?.comment_text || payload?.feedback_text || ""
   };
 
-  console.log("🟡 HTTP /ritual/complete →", url, "| attempt_id =", attempt_id);
+    console.log("🟡 HTTP /ritual/complete →", url, "| attempt_id =", attempt_id);
 
-  const r = await fetch(url, {
-    method: "POST",
-    headers: buildApiHeaders(),
-    body: JSON.stringify(body),
-    cache: "no-store",
-    keepalive: true
-  });
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: buildApiHeaders(),
+      body: JSON.stringify(body),
+      cache: "no-store",
+      keepalive: true
+    });
 
-  let respText = "";
-  try { respText = await r.text(); } catch(e){}
+    let respText = "";
+    try { respText = await r.text(); } catch(e){}
 
-  if (!r.ok) {
-    console.error("❌ /ritual/complete FAILED", r.status, respText);
-    throw new Error(`RITUAL_COMPLETE_HTTP_${r.status}`);
+    if (!r.ok) {
+      // ✅ Ne jamais casser l'UX de sortie pour une erreur backend (ex: 404 not_found)
+      console.warn("⚠️ /ritual/complete non OK", r.status, respText);
+      return { ok: false, status: r.status, body: respText };
+    }
+
+    console.log("✅ /ritual/complete OK", r.status, respText);
+    return { ok: true, status: r.status, body: respText };
+  } catch (e) {
+    console.warn("⚠️ /ritual/complete fetch error:", e?.message || e);
+    return { ok: false, status: 0, error: String(e?.message || e) };
   }
-
-  console.log("✅ /ritual/complete OK", r.status, respText);
-  return { ok: true, status: r.status, body: respText };
 }
+
 
 // ====== API LOAD ======
 function normalizeQuestion(q, idx){
@@ -636,10 +512,6 @@ function renderVelvetUnavailableScreen(){
 }
 
 async function ensureQuizData(){
-  // ⏳ Debug: simuler une latence réseau (désactivé par défaut)
-  if (DEBUG_RITUAL_LATENCY) {
-    await new Promise(r => setTimeout(r, DEBUG_RITUAL_LATENCY_MS));
-  }
   try{
     const fromApi = await fetchQuestionsFromAPI();
     if (Array.isArray(fromApi) && fromApi.length === QUESTIONS_COUNT){
@@ -805,7 +677,7 @@ const screenIntro = document.querySelector(".screen-intro");
 const screenChamber = document.querySelector(".screen-chamber");
 const screenQuiz = document.querySelector(".screen-quiz");
 const screenResult = document.querySelector(".screen-result");
-const screenFeedbackFinal = null; // removed (merged into result screen)
+const screenFeedbackFinal = document.querySelector(".screen-feedback-final");
 
 const btnReadyEl = document.getElementById("btn-ready");
 const btnStartRitualEl = document.getElementById("btn-start-ritual");
@@ -825,13 +697,13 @@ const resultTitleEl = document.getElementById("result-title");
 const resultSubtitleEl = document.getElementById("result-subtitle");
 const resultScoreEl = document.getElementById("result-score");
 const resultTimeEl = document.getElementById("result-time");
-const btnGoFeedback = null; // removed (result + feedback merged)
+const btnGoFeedback = document.getElementById("btn-go-feedback");
 
-const postRitualPanelEl = document.getElementById("post-ritual-panel");
-const feedbackFinalTextEl = document.getElementById("post-ritual-text");
-const feedbackFinalCloseBtn = document.getElementById("btn-quit");
-const feedbackFinalMessageEl = null;
-const feedbackFinalSignatureEl = null;
+const feedbackFinalTextEl = document.getElementById("feedback-final-text");
+const feedbackFinalSendBtn = document.getElementById("btn-feedback-final-send");
+const feedbackFinalMessageEl = document.getElementById("feedback-final-message");
+const feedbackFinalSignatureEl = document.getElementById("feedback-final-signature");
+const feedbackFinalCloseBtn = document.getElementById("btn-feedback-close");
 
 console.assert(btnReadyEl, "❌ btn-ready introuvable");
 console.assert(btnStartRitualEl, "❌ btn-start-ritual introuvable");
@@ -861,10 +733,6 @@ if (btnStartRitualEl) {
     if (screenChamber) screenChamber.classList.add("hidden");
     if (screenQuiz) screenQuiz.classList.remove("hidden");
 
-    // ✅ UX d’attente pendant la latence API (tirage questions)
-    try { btnStartRitualEl.disabled = true; } catch(e) {}
-    try { showRitualLoading(); } catch(e) {}
-
     hasAnyAnswer = false;
     try { setLiveScoreVisibility(false); } catch(e) {}
     try { updateCorrectCounter(); } catch(e) {}
@@ -884,17 +752,8 @@ if (btnStartRitualEl) {
     setTimerMode("question");
     if (quizTimerEl) quizTimerEl.textContent = `Temps · ${formatSeconds(questionRemaining)}`;
 
-    try{
-      await ensureQuizData();
-      await finishRitualLoading({ minMs: 650, settleMs: 900 });
-      startRituel();
-    } catch(e){
-      // ensureQuizData() déclenche déjà l’écran "indisponible" si besoin.
-      try { hideRitualLoading(); } catch(_){}
-      throw e;
-    } finally {
-      try { btnStartRitualEl.disabled = false; } catch(_) {}
-    }
+    await ensureQuizData();
+    startRituel();
   });
 }
 
@@ -1270,19 +1129,41 @@ function endRituel(){
 
   if (screenQuiz) screenQuiz.classList.add("hidden");
   if (screenResult) screenResult.classList.remove("hidden");
-
-  // ✅ Ouverture du panneau de sortie (feedback) — aucun écran intermédiaire
-  setTimeout(() => { try { openPostRitualPanel(); } catch(_){} }, 420);
-
 }
 
-);
+if (btnGoFeedback) {
+  btnGoFeedback.addEventListener("click", () => {
+    primeTickAudio();
+    if (screenResult) screenResult.classList.add("hidden");
+    if (screenFeedbackFinal) screenFeedbackFinal.classList.remove("hidden");
+  });
 }
 
-);
+if (feedbackFinalSendBtn && feedbackFinalTextEl) {
+  feedbackFinalSendBtn.disabled = true;
+  feedbackFinalTextEl.addEventListener("input", () => {
+    feedbackFinalSendBtn.disabled = (feedbackFinalTextEl.value.trim().length === 0);
+  });
 }
 
-;
+if (feedbackFinalSendBtn) {
+  feedbackFinalSendBtn.addEventListener("click", async () => {
+    primeTickAudio();
+    if (feedbackFinalSendBtn.disabled) return;
+
+    const feedbackText = feedbackFinalTextEl.value.trim();
+
+    finalPayload = {
+      mode: "rituel_full_v1",
+      score: finalScore,
+      total: TOTAL_QUESTIONS,
+      time_spent_seconds: finalTotalSeconds,
+      time_total_seconds: finalTotalSeconds,
+      time_formatted: formatSeconds(finalTotalSeconds),
+      answers: finalEnrichedAnswers,
+      comment_text: feedbackText,
+      analysis_mode: "nova_writing_score_v1"
+    };
 
     // ✅ Attach attempt_id + telegram_user_id to the Telegram sendData payload
     // This allows the bot (WEB_APP_DATA handler) to link feedback to the correct attempt in Airtable.
@@ -1321,7 +1202,9 @@ function endRituel(){
       console.error("❌ Error details:", e.message, e.stack);
     }
 
+    feedbackFinalSendBtn.disabled = true;
     if (feedbackFinalTextEl) feedbackFinalTextEl.readOnly = true;
+    feedbackFinalSendBtn.classList.add("hidden");
 
     if (feedbackFinalMessageEl){
       feedbackFinalMessageEl.classList.remove("hidden");
@@ -1340,103 +1223,39 @@ function endRituel(){
 }
 
 if (feedbackFinalCloseBtn) {
-      feedbackFinalCloseBtn.disabled = true;
+  feedbackFinalCloseBtn.addEventListener("click", () => {
+    try { primeTickAudio(); } catch(e) {}
 
-    primeTickAudio();
-    if (!finalPayload) return;
+    // ✅ UX d'abord : fermeture fluide, sans attendre le réseau
+    try { showRitualClosing(); } catch(e) {}
 
-    // ✅ fallback HTTP si jamais non parti
-    if (!finalPayloadHttpSent) {
-      try {
-        await ensureAttemptStarted();
-        await postRitualComplete(finalPayload);
-        finalPayloadHttpSent = true;
-      } catch (e) {
-        console.error("❌ HTTP complete failed (close fallback):", e?.message || e);
-      }
+    // Si pas de payload, on ferme quand même
+    const payload = finalPayload || null;
+
+    // ✅ Fire-and-forget HTTP (ne bloque jamais)
+    if (payload && !finalPayloadHttpSent) {
+      ensureAttemptStarted()
+        .then(() => postRitualComplete(payload))
+        .then((res) => { if (res && res.ok) finalPayloadHttpSent = true; })
+        .catch(() => {});
     }
 
-    // ✅ fallback Telegram si jamais non parti
-    if (!finalPayloadSent) {
-      console.log("🔍 DEBUG (fallback) - window.Telegram exists:", !!window.Telegram);
-      console.log("🔍 DEBUG (fallback) - window.Telegram.WebApp exists:", !!window.Telegram?.WebApp);
-      console.log("🔍 DEBUG (fallback) - sendData exists:", !!window.Telegram?.WebApp?.sendData);
-      
+    // ✅ Fire-and-forget Telegram sendData (ne bloque jamais)
+    if (payload && !finalPayloadSent) {
       try {
-        if (!window.Telegram || !window.Telegram.WebApp || !window.Telegram.WebApp.sendData) {
-          throw new Error("Telegram WebApp API not available");
+        if (window.Telegram?.WebApp?.sendData) {
+          window.Telegram.WebApp.sendData(JSON.stringify(payload));
+          finalPayloadSent = true;
+          console.log("✅ sendData() envoyé (quit) — payload_len =", JSON.stringify(payload).length);
         }
-        window.Telegram.WebApp.sendData(JSON.stringify(finalPayload));
-        finalPayloadSent = true;
-        console.log("✅ sendData() envoyé (close fallback) — payload_len =", JSON.stringify(finalPayload).length);
-      } catch (e) {
-        console.error("❌ sendData() a échoué (close fallback) :", e);
-        console.error("❌ Error details:", e.message, e.stack);
-      }
+      } catch(e) {}
     }
 
-        await new Promise(r => setTimeout(r, 900));
-try { window.Telegram?.WebApp?.close?.(); } catch (e) {
-      console.warn("⚠️ close() indisponible :", e);
-    }
+    // ✅ Fermeture WebApp (transition courte)
+    setTimeout(() => {
+      try { window.Telegram?.WebApp?.close?.(); } catch (e) {}
+    }, 320);
   });
 }
 
 console.log("✅ Listeners OK — boutons connectés");
-
-document.getElementById("post-ritual-text")?.addEventListener("input", (e) => { try { e.target.dataset.voTouched = "1"; } catch(_){} });
-
-
-
-if (feedbackFinalCloseBtn) {
-  feedbackFinalCloseBtn.addEventListener("click", async () => {
-    primeTickAudio();
-
-    const feedbackText = (feedbackFinalTextEl?.value || "").trim();
-
-    // Build final payload (same schema as before)
-    finalPayload = {
-      mode: "rituel_full_v1",
-      score: finalScore,
-      total: TOTAL_QUESTIONS,
-      time_spent_seconds: finalTotalSeconds,
-      time_total_seconds: finalTotalSeconds,
-      time_formatted: formatSeconds(finalTotalSeconds),
-      answers: finalEnrichedAnswers,
-      comment_text: feedbackText || null,
-      analysis_mode: "nova_writing_score_v1",
-      attempt_id: ritualAttemptId || null,
-      attempt_record_id: ritualAttemptId || null,
-      telegram_user_id: ritualPlayerTelegramUserId || getTelegramUserId() || null,
-    };
-
-    // 🔥 Make exit fluid: do NOT await the HTTP call.
-    // Fire-and-forget (best effort).
-    if (!finalPayloadHttpSent) {
-      ensureAttemptStarted()
-        .then(() => postRitualComplete(finalPayload))
-        .then(() => { finalPayloadHttpSent = true; })
-        .catch((e) => console.error("❌ HTTP complete failed (quit stage):", e?.message || e));
-    }
-
-    // Telegram sendData (best effort)
-    try {
-      if (!window.Telegram || !window.Telegram.WebApp || !window.Telegram.WebApp.sendData) {
-        throw new Error("Telegram WebApp API not available");
-      }
-      window.Telegram.WebApp.sendData(JSON.stringify(finalPayload));
-      finalPayloadSent = true;
-      console.log("✅ sendData() envoyé (quit) — payload_len =", JSON.stringify(finalPayload).length);
-    } catch (e) {
-      console.error("❌ sendData() a échoué (quit) :", e);
-    }
-
-    // Closing UX (fixed transition)
-    try { closePostRitualPanel(); } catch(_) {}
-    try { showRitualClosing(); } catch(_) {}
-    setTimeout(() => {
-      try { window.Telegram?.WebApp?.close(); } catch (_) {}
-      try { hideRitualClosing(); } catch(_) {}
-    }, 520);
-});
-}
