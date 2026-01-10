@@ -3,7 +3,7 @@ console.log("✅ app.js chargé — VelvetOracle");
 // ===========================
 // Ritual loading debug (local test only)
 // ===========================
-const DEBUG_RITUAL_LATENCY = true; // true = simule une latence avant le tirage
+const DEBUG_RITUAL_LATENCY = false; // true = simule une latence avant le tirage
 const DEBUG_RITUAL_LATENCY_MS = 2500;
 
 
