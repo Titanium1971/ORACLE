@@ -867,6 +867,15 @@ body.font-standard .quiz-option-text{
   width: 64px;
   height: 64px;
   border-radius: 999px;
+  position: relative;
+  overflow: hidden;
+}
+
+.ritual-ring::before{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  border-radius:999px;
   border: 1px solid rgba(200,169,106,.32);
   border-top-color: rgba(200,169,106,.88);
   box-shadow: 0 0 26px rgba(200,169,106,.08);
@@ -886,7 +895,7 @@ body.font-standard .quiz-option-text{
 }
 
 
-.ritual-loading.settling .ritual-ring{
+.ritual-loading.settling .ritual-ring::before{
   animation: none;
   border-top-color: rgba(200,169,106,.55);
   box-shadow: 0 0 34px rgba(200,169,106,.12);
