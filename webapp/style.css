@@ -837,42 +837,105 @@ body.font-standard .quiz-option-text{
 
 
 /* ===========================
-   Post Ritual Bottom-Sheet (Trace silencieuse)
-=========================== */
-.post-ritual-panel{
+   Ritual Loading Overlay
+   - UX d’attente pendant le tirage des questions
+============================ */
+.ritual-loading{
   position: fixed;
   inset: 0;
-  z-index: 10000;
-  background: rgba(0,0,0,0.78);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  z-index: 9999;
+  background: radial-gradient(circle at top, #121212 0, #050505 55%, #000 100%);
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
-  padding: 18px 14px;
+  padding: 24px 14px;
 }
 
-.post-ritual-panel.hidden{
-  display:none !important;
+.ritual-loading.hidden{
+  display: none !important;
 }
 
-.post-ritual-sheet{
-  width: min(720px, 100%);
-  border: 1px solid rgba(200,169,106,0.28);
-  border-radius: 18px;
-  background: rgba(0,0,0,0.88);
-  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
-  overflow: hidden;
-  transform: translateY(14px);
-  animation: postSheetIn 220ms ease-out forwards;
+.ritual-loader{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  text-align: center;
 }
 
-@keyframes postSheetIn{ to { transform: translateY(0); } }
+.ritual-ring{
+  width: 64px;
+  height: 64px;
+  border-radius: 999px;
+  border: 1px solid rgba(200,169,106,.32);
+  border-top-color: rgba(200,169,106,.88);
+  box-shadow: 0 0 26px rgba(200,169,106,.08);
+  animation: ritualSpin 2.2s linear infinite;
+}
 
-/* Avoid "double card" look inside sheet */
-.post-ritual-sheet .feedback-final-card{
-  border: none;
-  background: transparent;
-  box-shadow: none;
-  padding: 18px 16px 16px;
+.ritual-text{
+  font-size: 11px;
+  letter-spacing: .28em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: rgba(228,201,140,.70);
+}
+
+@keyframes ritualSpin{
+  to { transform: rotate(360deg); }
+}
+
+
+.ritual-loading.settling .ritual-ring{
+  animation: none;
+  border-top-color: rgba(200,169,106,.55);
+  box-shadow: 0 0 34px rgba(200,169,106,.12);
+}
+
+
+/* ===========================
+   Ritual Closing Overlay
+   =========================== */
+
+.ritual-closing {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 1);
+  z-index: 10000;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 420ms ease;
+}
+
+.ritual-closing.hidden {
+  display: none;
+}
+
+.ritual-closing.show {
+  opacity: 1;
+}
+
+.ritual-closing-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px 18px;
+  text-align: center;
+}
+
+.ritual-closing-title {
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  color: rgba(200, 169, 106, 0.78);
+  text-transform: uppercase;
+}
+
+.ritual-closing-subtitle {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: rgba(200, 169, 106, 0.45);
 }
