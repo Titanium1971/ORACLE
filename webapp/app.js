@@ -247,8 +247,15 @@ function getQueryParam(name) {
   }
 }
 
-const DEFAULT_API_URL = "https://velvet-mcp-core--Velvet-elite.replit.app";
-const QUESTIONS_API_URL = (getQueryParam("api") || DEFAULT_API_URL).replace(/\/+$/, "");
+const DEFAULT_API_URL = "https://oracle--velvet-elite.replit.app";
+let QUESTIONS_API_URL = (getQueryParam("api") || DEFAULT_API_URL).replace(/\/+$/, "");
+
+// ✅ Hard override: old/dead backend links (Telegram cache) still pass api=velvet-mcp-core.
+// We neutralize it here so even ancient buttons keep working.
+if (QUESTIONS_API_URL.includes("velvet-mcp-core")) {
+  console.warn("🟠 OVERRIDE api (old backend) →", QUESTIONS_API_URL, "→", DEFAULT_API_URL);
+  QUESTIONS_API_URL = DEFAULT_API_URL;
+}
 console.log("✅ API BASE =", QUESTIONS_API_URL);
 
 const QUESTIONS_COUNT = 15;
@@ -480,10 +487,6 @@ function renderVelvetUnavailableScreen(){
           Reviens dans quelques instants. Sans bruit. Sans urgence.
         </div>
 
-
-        <div style="margin-top:10px; font-size:11px; line-height:1.45; color:rgba(216,199,160,.55); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">
-          DEBUG · api=<span id="vo_dbg_api"></span> · tg_id=<span id="vo_dbg_tg"></span>
-        </div>
         <button id="vo_retry"
           style="appearance:none;border:1px solid rgba(216,199,160,.35); background:rgba(216,199,160,.08);
                  color:#d8c7a0; padding:12px 16px; border-radius:999px; cursor:pointer;
@@ -497,15 +500,6 @@ function renderVelvetUnavailableScreen(){
       </div>
     </div>
   `;
-
-
-  try {
-    const apiEl = document.getElementById("vo_dbg_api");
-    const tgEl = document.getElementById("vo_dbg_tg");
-    if (apiEl) apiEl.textContent = String(QUESTIONS_API_URL || "");
-    const tid = (typeof getTelegramUserId === "function") ? getTelegramUserId() : "";
-    if (tgEl) tgEl.textContent = tid ? tid : "(missing)";
-  } catch (_) {}
 
   document.getElementById("vo_retry")?.addEventListener("click", () => location.reload());
 }
