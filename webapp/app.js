@@ -1,8 +1,5 @@
 console.log("🟣 Velvet build:", "API_ONLY_SCREEN_V1+RITUAL_COMPLETE_HTTP", new Date().toISOString());
 console.log("✅ app.js chargé — VelvetOracle");
-console.log("🟢 APP_FIXED_V3_LOADED", new Date().toISOString());
-console.log("🟢 APP_FIXED_V4_LOADER_OK", new Date().toISOString());
-
 
 // =========================================================================
 // Velvet Typo Canon — Normalisation (Morena)
@@ -320,23 +317,27 @@ function buildApiHeaders(){
   return headers;
 }
 
+
 // =========================================================================
 // ✅ UX latence — Overlay de préparation (rituel)
 // =========================================================================
-// =========================================================================
-// ✅ UX latence — Overlay de préparation (rituel) (V4)
-// =========================================================================
 function showRitualLoading(){
   const el = document.getElementById("ritual-loading");
-  if (!el) return;
-  el.classList.remove("hidden");
-  el.classList.remove("settling"); // garantit halo + rotation
+  if (el){
+    el.classList.remove("hidden");
+    el.classList.remove("settling"); // ✅ important : laisse l’animation tourner
+  }
 }
+
 function hideRitualLoading(){
   const el = document.getElementById("ritual-loading");
-  if (!el) return;
-  el.classList.add("hidden");
+  if (el){
+    el.classList.remove("settling");
+    el.classList.add("hidden");
+  }
 }
+
+
 /** tente de créer un attempt côté backend (visible dans Network) */
 async function ensureAttemptStarted(){
   if (ritualAttemptId) return ritualAttemptId;
@@ -366,28 +367,6 @@ async function ensureAttemptStarted(){
     return ritualAttemptId;
   }
 }
-
-
-// =========================================================================
-// ✅ UX clôture — Attente d’enregistrement
-// =========================================================================
-function showRitualClosing(title, subtitle){
-  const el = document.getElementById("ritual-closing");
-  if (!el) return;
-  const t = el.querySelector(".ritual-closing-title");
-  const s = el.querySelector(".ritual-closing-subtitle");
-  if (t) t.textContent = title || "Nous enregistrons votre résultat…";
-  if (s) s.textContent = subtitle || "Un instant.";
-  el.classList.remove("hidden");
-  requestAnimationFrame(() => el.classList.add("show"));
-}
-function hideRitualClosing(){
-  const el = document.getElementById("ritual-closing");
-  if (!el) return;
-  el.classList.remove("show");
-  setTimeout(() => el.classList.add("hidden"), 420);
-}
-
 
 /** envoie la clôture au backend (visible dans Network) */
 async function postRitualComplete(payload){
@@ -781,23 +760,16 @@ if (btnStartRitualEl) {
     showRitualLoading();
 
     try {
-      // ✅ attempt_id: on le démarre tôt (Network visible)
+      // 1) attempt_id (peut être lent)
       try { await ensureAttemptStarted(); } catch(e) {}
 
-    questionRemaining = 45;
-    railTotalSeconds = 45;
-    setRailMode("question");
-    setRailProgress(questionRemaining, railTotalSeconds);
-    setTimerMode("question");
-    if (quizTimerEl) quizTimerEl.textContent = `Temps · ${formatSeconds(questionRemaining)}`;
-
+      // 2) questions (latence principale)
       await ensureQuizData();
     } finally {
       hideRitualLoading();
     }
 
-    startRituel();
-});
+    startRituel();});
 }
 
 function setLiveScoreVisibility(show){

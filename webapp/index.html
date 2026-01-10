@@ -8,7 +8,7 @@
   <!-- Telegram WebApp SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-  <link rel="stylesheet" href="style.css?v=2" />
+  <link rel="stylesheet" href="style.css?v=1" />
 </head>
 
 <body class="font-velvet">
@@ -169,7 +169,39 @@
       </div>
     </div>
 
-        <!-- Ritual Loading Overlay -->
+    <!-- ÉCRAN 5 -->
+    <div class="screen-feedback-final hidden">
+      <div class="feedback-final-card">
+        <div class="logo">
+          <img src="velvet-logo.svg" alt="Velvet Oracle — Feedback">
+        </div>
+
+        <div class="result-heading">Velvet Oracle — Trace silencieuse</div>
+        <div class="result-line" style="margin-bottom:14px;"></div>
+
+        <div class="feedback-title">Laisser une trace pour ton futur toi</div>
+        <div class="feedback-helper">
+          Quelques lignes suffisent.
+          <span>Écris comme si tu te relisais dans quelques années.</span>
+        </div>
+
+        <textarea
+          id="feedback-final-text"
+          class="feedback-textarea"
+          rows="4"
+          placeholder="Note ce qui t’a semblé fluide, ce qui t’a résisté, ce que ce rituel a réveillé en toi : assurance, doute, agacement, envie de hausser ton niveau."
+        ></textarea>
+
+        <button class="feedback-send" id="btn-feedback-final-send">Envoyer ton ressenti</button>
+        <button class="feedback-send hidden" id="btn-feedback-close">Vous pouvez fermer cette fenêtre</button>
+
+        <div class="feedback-final-message hidden" id="feedback-final-message"></div>
+        <div class="feedback-final-signature hidden" id="feedback-final-signature">Velvet Élite · Velvet Oracle</div>
+      </div>
+    </div>
+
+
+    <!-- Ritual Loading Overlay -->
     <div id="ritual-loading" class="ritual-loading hidden" aria-hidden="true">
       <div class="ritual-loader">
         <div class="ritual-ring" aria-hidden="true"></div>
@@ -193,6 +225,6 @@
   </audio>
 
   <!-- Ton script applicatif -->
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=1"></script>
 </body>
 </html>

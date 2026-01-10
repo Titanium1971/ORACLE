@@ -948,21 +948,3 @@ body.font-standard .quiz-option-text{
   letter-spacing: 0.02em;
   color: rgba(200, 169, 106, 0.45);
 }
-/* ===========================
-   ✅ PATCH V3 — Force visibilité du halo (iOS/Telegram safe)
-   - Assure un cercle visible même si ::before ne rend pas
-   - Assure que ::before est bien affiché
-============================ */
-.ritual-ring{
-  display:block !important;
-  min-width:64px !important;
-  min-height:64px !important;
-  border: 1px solid rgba(200,169,106,.32) !important;
-  border-top-color: rgba(200,169,106,.88) !important;
-  box-shadow: 0 0 26px rgba(200,169,106,.10) !important;
-  background: radial-gradient(circle at 30% 30%, rgba(228,201,140,.10), rgba(0,0,0,0) 55%) !important;
-}
-.ritual-ring::before{
-  display:block !important;
-  pointer-events:none !important;
-}
