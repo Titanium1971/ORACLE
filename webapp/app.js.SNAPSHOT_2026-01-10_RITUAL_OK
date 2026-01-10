@@ -247,8 +247,15 @@ function getQueryParam(name) {
   }
 }
 
-const DEFAULT_API_URL = "https://velvet-mcp-core--Velvet-elite.replit.app";
-const QUESTIONS_API_URL = (getQueryParam("api") || DEFAULT_API_URL).replace(/\/+$/, "");
+const DEFAULT_API_URL = "https://oracle--velvet-elite.replit.app";
+let QUESTIONS_API_URL = (getQueryParam("api") || DEFAULT_API_URL).replace(/\/+$/, "");
+
+// ✅ Hard override: old/dead backend links (Telegram cache) still pass api=velvet-mcp-core.
+// We neutralize it here so even ancient buttons keep working.
+if (QUESTIONS_API_URL.includes("velvet-mcp-core")) {
+  console.warn("🟠 OVERRIDE api (old backend) →", QUESTIONS_API_URL, "→", DEFAULT_API_URL);
+  QUESTIONS_API_URL = DEFAULT_API_URL;
+}
 console.log("✅ API BASE =", QUESTIONS_API_URL);
 
 const QUESTIONS_COUNT = 15;

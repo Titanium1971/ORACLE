@@ -834,3 +834,60 @@ body.font-standard .quiz-option-text{
   color: rgba(245,242,232,0.92);
   white-space: nowrap;
 }
+
+
+/* ===========================
+   Ritual Loading Overlay
+   - UX d’attente pendant le tirage des questions
+============================ */
+.ritual-loading{
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: radial-gradient(circle at top, #121212 0, #050505 55%, #000 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 14px;
+}
+
+.ritual-loading.hidden{
+  display: none !important;
+}
+
+.ritual-loader{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.ritual-ring{
+  width: 64px;
+  height: 64px;
+  border-radius: 999px;
+  border: 1px solid rgba(200,169,106,.32);
+  border-top-color: rgba(200,169,106,.88);
+  box-shadow: 0 0 26px rgba(200,169,106,.08);
+  animation: ritualSpin 2.2s linear infinite;
+}
+
+.ritual-text{
+  font-size: 11px;
+  letter-spacing: .28em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: rgba(228,201,140,.70);
+}
+
+@keyframes ritualSpin{
+  to { transform: rotate(360deg); }
+}
+
+
+.ritual-loading.settling .ritual-ring{
+  animation: none;
+  border-top-color: rgba(200,169,106,.55);
+  box-shadow: 0 0 34px rgba(200,169,106,.12);
+}

@@ -1,5 +1,12 @@
 console.log("🟣 Velvet build:", "API_ONLY_SCREEN_V1+RITUAL_COMPLETE_HTTP", new Date().toISOString());
 console.log("✅ app.js chargé — VelvetOracle");
+// ===========================
+// Ritual loading debug (local test only)
+// ===========================
+const DEBUG_RITUAL_LATENCY = true; // true = simule une latence avant le tirage
+const DEBUG_RITUAL_LATENCY_MS = 2500;
+
+
 
 // =========================================================================
 // Velvet Typo Canon — Normalisation (Morena)
@@ -164,6 +171,46 @@ function injectFontChooser() {
   startBtn.parentNode.insertBefore(wrap, startBtn);
 
   applyFontMode(getSavedFontMode());
+
+// =========================================================================
+// Ritual Loading Overlay (latence questions)
+// =========================================================================
+let __ritualLoadingShownAt = 0;
+
+function showRitualLoading(){
+  const el = document.getElementById("ritual-loading");
+  if (!el) return;
+  __ritualLoadingShownAt = Date.now();
+  el.classList.remove("hidden");
+  el.classList.remove("settling");
+  el.setAttribute("aria-hidden", "false");
+}
+
+function setRitualLoadingSettling(){
+  const el = document.getElementById("ritual-loading");
+  if (!el) return;
+  el.classList.add("settling");
+}
+
+function hideRitualLoading(){
+  const el = document.getElementById("ritual-loading");
+  if (!el) return;
+  el.classList.add("hidden");
+  el.classList.remove("settling");
+  el.setAttribute("aria-hidden", "true");
+}
+
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+async function finishRitualLoading({ minMs = 650, settleMs = 900 } = {}){
+  const elapsed = Date.now() - (__ritualLoadingShownAt || Date.now());
+  const waitMin = Math.max(0, minMs - elapsed);
+  if (waitMin) await sleep(waitMin);
+  setRitualLoadingSettling();
+  if (settleMs) await sleep(settleMs);
+  hideRitualLoading();
+}
+
 }
 
 // =========================================================================
@@ -284,6 +331,46 @@ try {
 } catch (e) {}
 
 applyFontMode(getSavedFontMode());
+
+// =========================================================================
+// Ritual Loading Overlay (latence questions)
+// =========================================================================
+let __ritualLoadingShownAt = 0;
+
+function showRitualLoading(){
+  const el = document.getElementById("ritual-loading");
+  if (!el) return;
+  __ritualLoadingShownAt = Date.now();
+  el.classList.remove("hidden");
+  el.classList.remove("settling");
+  el.setAttribute("aria-hidden", "false");
+}
+
+function setRitualLoadingSettling(){
+  const el = document.getElementById("ritual-loading");
+  if (!el) return;
+  el.classList.add("settling");
+}
+
+function hideRitualLoading(){
+  const el = document.getElementById("ritual-loading");
+  if (!el) return;
+  el.classList.add("hidden");
+  el.classList.remove("settling");
+  el.setAttribute("aria-hidden", "true");
+}
+
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+async function finishRitualLoading({ minMs = 650, settleMs = 900 } = {}){
+  const elapsed = Date.now() - (__ritualLoadingShownAt || Date.now());
+  const waitMin = Math.max(0, minMs - elapsed);
+  if (waitMin) await sleep(waitMin);
+  setRitualLoadingSettling();
+  if (settleMs) await sleep(settleMs);
+  hideRitualLoading();
+}
+
 
 // =========================================================================
 // ✅ RITUEL: identité session / attempt_id (HTTP visible)
@@ -505,6 +592,10 @@ function renderVelvetUnavailableScreen(){
 }
 
 async function ensureQuizData(){
+  // ⏳ Debug: simuler une latence réseau (désactivé par défaut)
+  if (DEBUG_RITUAL_LATENCY) {
+    await new Promise(r => setTimeout(r, DEBUG_RITUAL_LATENCY_MS));
+  }
   try{
     const fromApi = await fetchQuestionsFromAPI();
     if (Array.isArray(fromApi) && fromApi.length === QUESTIONS_COUNT){
@@ -726,6 +817,10 @@ if (btnStartRitualEl) {
     if (screenChamber) screenChamber.classList.add("hidden");
     if (screenQuiz) screenQuiz.classList.remove("hidden");
 
+    // ✅ UX d’attente pendant la latence API (tirage questions)
+    try { btnStartRitualEl.disabled = true; } catch(e) {}
+    try { showRitualLoading(); } catch(e) {}
+
     hasAnyAnswer = false;
     try { setLiveScoreVisibility(false); } catch(e) {}
     try { updateCorrectCounter(); } catch(e) {}
@@ -745,8 +840,17 @@ if (btnStartRitualEl) {
     setTimerMode("question");
     if (quizTimerEl) quizTimerEl.textContent = `Temps · ${formatSeconds(questionRemaining)}`;
 
-    await ensureQuizData();
-    startRituel();
+    try{
+      await ensureQuizData();
+      await finishRitualLoading({ minMs: 650, settleMs: 900 });
+      startRituel();
+    } catch(e){
+      // ensureQuizData() déclenche déjà l’écran "indisponible" si besoin.
+      try { hideRitualLoading(); } catch(_){}
+      throw e;
+    } finally {
+      try { btnStartRitualEl.disabled = false; } catch(_) {}
+    }
   });
 }
 
