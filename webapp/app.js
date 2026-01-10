@@ -1,6 +1,30 @@
 console.log("🟣 Velvet build:", "API_ONLY_SCREEN_V1+RITUAL_COMPLETE_HTTP", new Date().toISOString());
 console.log("✅ app.js chargé — VelvetOracle");
 
+/**
+ * Safety: always enable the Intro → Chambre transition even if later JS fails.
+ * Uses event delegation to avoid null refs.
+ */
+document.addEventListener("click", (e) => {
+  const t = e?.target;
+  const btn = t?.closest ? t.closest("#btn-ready") : null;
+  if (!btn) return;
+  try {
+    console.log("🛟 SAFE CLICK btn-ready — Intro → Chambre");
+    const screenIntro = document.querySelector(".screen-intro");
+    const screenChamber = document.querySelector(".screen-chamber");
+    screenIntro?.classList.add("hidden");
+    screenChamber?.classList.remove("hidden");
+    // Optional: prime audio + inject UI if available
+    try { window.primeTickAudio?.(); } catch(_) {}
+    try { window.injectFullscreenSeal?.(); } catch(_) {}
+    try { window.injectFontChooser?.(); } catch(_) {}
+  } catch (err) {
+    console.error("SAFE btn-ready failed:", err);
+  }
+});
+
+
 // =========================================================================
 // Velvet Typo Canon — Normalisation (Morena)
 // =========================================================================
