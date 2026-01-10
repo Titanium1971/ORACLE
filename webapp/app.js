@@ -1,19 +1,3 @@
-
-// =========================
-// Ritual Loading helpers (patched)
-// =========================
-function showRitualLoading(){
-  const el = document.getElementById("ritual-loading");
-  if (!el) return;
-  el.classList.remove("hidden");
-  el.classList.remove("settling"); // ensure halo animates
-}
-function hideRitualLoading(){
-  const el = document.getElementById("ritual-loading");
-  if (!el) return;
-  el.classList.add("hidden");
-}
-
 console.log("🟣 Velvet build:", "API_ONLY_SCREEN_V1+RITUAL_COMPLETE_HTTP", new Date().toISOString());
 console.log("✅ app.js chargé — VelvetOracle");
 
@@ -56,20 +40,20 @@ function applyFontMode(mode) {
     root.style.setProperty(
       "--font-display",
       `-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,-webkit-system-font,"Segoe UI",Roboto,sans-serif`
-    );
+
     root.style.setProperty(
       "--font-body",
       `-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,-webkit-system-font,"Segoe UI",Roboto,sans-serif`
-    );
+
   } else {
     root.style.setProperty(
       "--font-display",
       `"Morena",-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,-webkit-system-font,"Segoe UI",Roboto,sans-serif`
-    );
+
     root.style.setProperty(
       "--font-body",
       `-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,-webkit-system-font,"Segoe UI",Roboto,sans-serif`
-    );
+
   }
 
   try { localStorage.setItem(FONT_STORAGE_KEY, m); } catch (_) {}
@@ -332,6 +316,23 @@ function buildApiHeaders(){
   if (initData) headers["X-Telegram-InitData"] = initData;
   return headers;
 }
+
+// =========================================================================
+// ✅ UX latence — Overlay de préparation (rituel) (stable)
+// =========================================================================
+function showRitualLoading(){
+  const el = document.getElementById("ritual-loading");
+  if (!el) return;
+  el.classList.remove("hidden");
+  el.classList.remove("settling"); // garantit halo + rotation
+}
+function hideRitualLoading(){
+  const el = document.getElementById("ritual-loading");
+  if (!el) return;
+  el.classList.add("hidden");
+}
+
+
 
 /** tente de créer un attempt côté backend (visible dans Network) */
 async function ensureAttemptStarted(){
@@ -751,8 +752,12 @@ if (btnStartRitualEl) {
       setTimeout(() => window.Telegram?.WebApp?.expand?.(), 250);
     });
 
-    // ✅ attempt_id: on le démarre tôt (Network visible)
-    try { await ensureAttemptStarted(); } catch(e) {}
+    // ✅ UX latence : couvre /ritual/start + /questions/random
+    showRitualLoading();
+
+    try {
+      // ✅ attempt_id: on le démarre tôt (Network visible)
+      try { await ensureAttemptStarted(); } catch(e) {}
 
     questionRemaining = 45;
     railTotalSeconds = 45;
@@ -760,10 +765,13 @@ if (btnStartRitualEl) {
     setRailProgress(questionRemaining, railTotalSeconds);
     setTimerMode("question");
     if (quizTimerEl) quizTimerEl.textContent = `Temps · ${formatSeconds(questionRemaining)}`;
+      await ensureQuizData();
+    } finally {
+      hideRitualLoading();
+    }
 
-    await ensureQuizData();
     startRituel();
-  });
+});
 }
 
 function setLiveScoreVisibility(show){
@@ -1138,22 +1146,14 @@ function endRituel(){
 
   if (screenQuiz) screenQuiz.classList.add("hidden");
   if (screenResult) screenResult.classList.remove("hidden");
-  // ✅ Feedback intégré : on supprime le saut et on exige un texte avant envoi
-  if (btnGoFeedback) btnGoFeedback.classList.add("hidden");
-  if (feedbackFinalSendBtn) feedbackFinalSendBtn.disabled = true;
-  if (feedbackFinalTextEl) feedbackFinalTextEl.readOnly = false;
-  if (feedbackFinalSendBtn) feedbackFinalSendBtn.classList.remove("hidden");
-  if (feedbackFinalMessageEl) feedbackFinalMessageEl.classList.add("hidden");
-  if (feedbackFinalSignatureEl) feedbackFinalSignatureEl.classList.add("hidden");
-  if (feedbackFinalCloseBtn) feedbackFinalCloseBtn.classList.add("hidden");
 }
 
 if (btnGoFeedback) {
-  // Feedback est désormais intégré à l’écran Résultats (flux sans saut)
-  btnGoFeedback.classList.add("hidden");
-}
-
-);
+  btnGoFeedback.addEventListener("click", () => {
+    primeTickAudio();
+    if (screenResult) screenResult.classList.add("hidden");
+    if (screenFeedbackFinal) screenFeedbackFinal.classList.remove("hidden");
+  });
 }
 
 if (feedbackFinalSendBtn && feedbackFinalTextEl) {
@@ -1190,9 +1190,6 @@ if (feedbackFinalSendBtn) {
     finalPayload.telegram_user_id = ritualPlayerTelegramUserId || getTelegramUserId() || null;
 
 
-    // ✅ UX: attente d’enregistrement
-    showRitualClosing("Nous enregistrons votre résultat…", "Un instant.");
-
     // ✅ 1) HTTP complete (Network visible)
     if (!finalPayloadHttpSent) {
       try {
@@ -1201,17 +1198,8 @@ if (feedbackFinalSendBtn) {
         finalPayloadHttpSent = true;
       } catch (e) {
         console.error("❌ HTTP complete failed (feedback stage):", e?.message || e);
-        if (feedbackFinalMessageEl){
-          feedbackFinalMessageEl.classList.remove("hidden");
-          feedbackFinalMessageEl.innerHTML = "Transmission instable. Réessaie dans un instant.";
-        }
-        if (feedbackFinalSendBtn) feedbackFinalSendBtn.disabled = false;
-        if (feedbackFinalTextEl) feedbackFinalTextEl.readOnly = false;
       }
     }
-
-    // ✅ On retire l’écran d’attente (succès ou échec)
-    hideRitualClosing();
 
     // ✅ 2) Telegram sendData (bot)
     console.log("🔍 DEBUG - window.Telegram exists:", !!window.Telegram);
