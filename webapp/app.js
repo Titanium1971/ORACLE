@@ -781,7 +781,7 @@ const screenIntro = document.querySelector(".screen-intro");
 const screenChamber = document.querySelector(".screen-chamber");
 const screenQuiz = document.querySelector(".screen-quiz");
 const screenResult = document.querySelector(".screen-result");
-const screenFeedbackFinal = document.querySelector(".screen-feedback-final");
+const screenFeedbackFinal = null; // removed (merged into result screen)
 
 const btnReadyEl = document.getElementById("btn-ready");
 const btnStartRitualEl = document.getElementById("btn-start-ritual");
@@ -801,13 +801,13 @@ const resultTitleEl = document.getElementById("result-title");
 const resultSubtitleEl = document.getElementById("result-subtitle");
 const resultScoreEl = document.getElementById("result-score");
 const resultTimeEl = document.getElementById("result-time");
-const btnGoFeedback = document.getElementById("btn-go-feedback");
+const btnGoFeedback = null; // removed (result + feedback merged)
 
 const feedbackFinalTextEl = document.getElementById("feedback-final-text");
 const feedbackFinalSendBtn = document.getElementById("btn-feedback-final-send");
 const feedbackFinalMessageEl = document.getElementById("feedback-final-message");
 const feedbackFinalSignatureEl = document.getElementById("feedback-final-signature");
-const feedbackFinalCloseBtn = document.getElementById("btn-feedback-close");
+const feedbackFinalCloseBtn = document.getElementById("btn-quit");
 
 console.assert(btnReadyEl, "❌ btn-ready introuvable");
 console.assert(btnStartRitualEl, "❌ btn-start-ritual introuvable");
@@ -1248,39 +1248,13 @@ function endRituel(){
   if (screenResult) screenResult.classList.remove("hidden");
 }
 
-if (btnGoFeedback) {
-  btnGoFeedback.addEventListener("click", () => {
-    primeTickAudio();
-    if (screenResult) screenResult.classList.add("hidden");
-    if (screenFeedbackFinal) screenFeedbackFinal.classList.remove("hidden");
-  });
+);
 }
 
-if (feedbackFinalSendBtn && feedbackFinalTextEl) {
-  feedbackFinalSendBtn.disabled = true;
-  feedbackFinalTextEl.addEventListener("input", () => {
-    feedbackFinalSendBtn.disabled = (feedbackFinalTextEl.value.trim().length === 0);
-  });
+);
 }
 
-if (feedbackFinalSendBtn) {
-  feedbackFinalSendBtn.addEventListener("click", async () => {
-    primeTickAudio();
-    if (feedbackFinalSendBtn.disabled) return;
-
-    const feedbackText = feedbackFinalTextEl.value.trim();
-
-    finalPayload = {
-      mode: "rituel_full_v1",
-      score: finalScore,
-      total: TOTAL_QUESTIONS,
-      time_spent_seconds: finalTotalSeconds,
-      time_total_seconds: finalTotalSeconds,
-      time_formatted: formatSeconds(finalTotalSeconds),
-      answers: finalEnrichedAnswers,
-      comment_text: feedbackText,
-      analysis_mode: "nova_writing_score_v1"
-    };
+;
 
     // ✅ Attach attempt_id + telegram_user_id to the Telegram sendData payload
     // This allows the bot (WEB_APP_DATA handler) to link feedback to the correct attempt in Airtable.
@@ -1319,9 +1293,7 @@ if (feedbackFinalSendBtn) {
       console.error("❌ Error details:", e.message, e.stack);
     }
 
-    feedbackFinalSendBtn.disabled = true;
     if (feedbackFinalTextEl) feedbackFinalTextEl.readOnly = true;
-    feedbackFinalSendBtn.classList.add("hidden");
 
     if (feedbackFinalMessageEl){
       feedbackFinalMessageEl.classList.remove("hidden");
@@ -1340,9 +1312,7 @@ if (feedbackFinalSendBtn) {
 }
 
 if (feedbackFinalCloseBtn) {
-  feedbackFinalCloseBtn.addEventListener("click", async () => {
-    showRitualClosing();
-    feedbackFinalCloseBtn.disabled = true;
+      feedbackFinalCloseBtn.disabled = true;
 
     primeTickAudio();
     if (!finalPayload) return;
@@ -1385,3 +1355,56 @@ try { window.Telegram?.WebApp?.close?.(); } catch (e) {
 }
 
 console.log("✅ Listeners OK — boutons connectés");
+
+
+if (feedbackFinalCloseBtn) {
+  feedbackFinalCloseBtn.addEventListener("click", async () => {
+    primeTickAudio();
+
+    const feedbackText = (feedbackFinalTextEl?.value || "").trim();
+
+    // Build final payload (same schema as before)
+    finalPayload = {
+      mode: "rituel_full_v1",
+      score: finalScore,
+      total: TOTAL_QUESTIONS,
+      time_spent_seconds: finalTotalSeconds,
+      time_total_seconds: finalTotalSeconds,
+      time_formatted: formatSeconds(finalTotalSeconds),
+      answers: finalEnrichedAnswers,
+      comment_text: feedbackText || null,
+      analysis_mode: "nova_writing_score_v1",
+      attempt_id: ritualAttemptId || null,
+      attempt_record_id: ritualAttemptId || null,
+      telegram_user_id: ritualPlayerTelegramUserId || getTelegramUserId() || null,
+    };
+
+    // 🔥 Make exit fluid: do NOT await the HTTP call.
+    // Fire-and-forget (best effort).
+    if (!finalPayloadHttpSent) {
+      ensureAttemptStarted()
+        .then(() => postRitualComplete(finalPayload))
+        .then(() => { finalPayloadHttpSent = true; })
+        .catch((e) => console.error("❌ HTTP complete failed (quit stage):", e?.message || e));
+    }
+
+    // Telegram sendData (best effort)
+    try {
+      if (!window.Telegram || !window.Telegram.WebApp || !window.Telegram.WebApp.sendData) {
+        throw new Error("Telegram WebApp API not available");
+      }
+      window.Telegram.WebApp.sendData(JSON.stringify(finalPayload));
+      finalPayloadSent = true;
+      console.log("✅ sendData() envoyé (quit) — payload_len =", JSON.stringify(finalPayload).length);
+    } catch (e) {
+      console.error("❌ sendData() a échoué (quit) :", e);
+    }
+
+    // Closing UX (fixed transition)
+    finishRitualLoading(); // reuse the existing closing overlay
+    setTimeout(() => {
+      try { window.Telegram?.WebApp?.close(); } catch (_) {}
+      hideRitualLoading();
+    }, 900);
+  });
+}
