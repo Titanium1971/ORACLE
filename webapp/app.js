@@ -40,20 +40,20 @@ function applyFontMode(mode) {
     root.style.setProperty(
       "--font-display",
       `-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,-webkit-system-font,"Segoe UI",Roboto,sans-serif`
-
+    );
     root.style.setProperty(
       "--font-body",
       `-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,-webkit-system-font,"Segoe UI",Roboto,sans-serif`
-
+    );
   } else {
     root.style.setProperty(
       "--font-display",
       `"Morena",-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,-webkit-system-font,"Segoe UI",Roboto,sans-serif`
-
+    );
     root.style.setProperty(
       "--font-body",
       `-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,-webkit-system-font,"Segoe UI",Roboto,sans-serif`
-
+    );
   }
 
   try { localStorage.setItem(FONT_STORAGE_KEY, m); } catch (_) {}
@@ -318,7 +318,7 @@ function buildApiHeaders(){
 }
 
 // =========================================================================
-// ✅ UX latence — Overlay de préparation (rituel) (stable)
+// ✅ UX latence — Overlay de préparation (rituel)
 // =========================================================================
 function showRitualLoading(){
   const el = document.getElementById("ritual-loading");
@@ -363,6 +363,28 @@ async function ensureAttemptStarted(){
     return ritualAttemptId;
   }
 }
+
+
+// =========================================================================
+// ✅ UX clôture — Attente d’enregistrement
+// =========================================================================
+function showRitualClosing(title, subtitle){
+  const el = document.getElementById("ritual-closing");
+  if (!el) return;
+  const t = el.querySelector(".ritual-closing-title");
+  const s = el.querySelector(".ritual-closing-subtitle");
+  if (t) t.textContent = title || "Nous enregistrons votre résultat…";
+  if (s) s.textContent = subtitle || "Un instant.";
+  el.classList.remove("hidden");
+  requestAnimationFrame(() => el.classList.add("show"));
+}
+function hideRitualClosing(){
+  const el = document.getElementById("ritual-closing");
+  if (!el) return;
+  el.classList.remove("show");
+  setTimeout(() => el.classList.add("hidden"), 420);
+}
+
 
 /** envoie la clôture au backend (visible dans Network) */
 async function postRitualComplete(payload){
@@ -765,6 +787,7 @@ if (btnStartRitualEl) {
     setRailProgress(questionRemaining, railTotalSeconds);
     setTimerMode("question");
     if (quizTimerEl) quizTimerEl.textContent = `Temps · ${formatSeconds(questionRemaining)}`;
+
       await ensureQuizData();
     } finally {
       hideRitualLoading();
