@@ -393,30 +393,6 @@ async function finishRitualLoading({ minMs = 650, settleMs = 900 } = {}){
 
 
 // =========================================================================
-// Post Ritual Bottom Sheet (feedback en sortie)
-// =========================================================================
-function openPostRitualPanel(){
-  const panel = document.getElementById("post-ritual-panel");
-  if (!panel) return;
-  panel.classList.remove("hidden");
-  panel.setAttribute("aria-hidden", "false");
-  const ta = document.getElementById("post-ritual-text");
-  if (ta) {
-    ta.readOnly = false;
-    // Ne pas effacer si l’utilisateur a déjà commencé à écrire (sécurité)
-    if (!ta.dataset.voTouched) ta.value = "";
-    setTimeout(() => { try { ta.focus(); } catch(_){} }, 50);
-  }
-}
-
-function closePostRitualPanel(){
-  const panel = document.getElementById("post-ritual-panel");
-  if (!panel) return;
-  panel.classList.add("hidden");
-  panel.setAttribute("aria-hidden", "true");
-}
-
-// =========================================================================
 // ✅ RITUEL: identité session / attempt_id (HTTP visible)
 // =========================================================================
 let ritualAttemptId = null;
@@ -827,11 +803,11 @@ const resultScoreEl = document.getElementById("result-score");
 const resultTimeEl = document.getElementById("result-time");
 const btnGoFeedback = null; // removed (result + feedback merged)
 
-const postRitualPanelEl = document.getElementById("post-ritual-panel");
-const feedbackFinalTextEl = document.getElementById("post-ritual-text");
+const feedbackFinalTextEl = document.getElementById("feedback-final-text");
+const feedbackFinalSendBtn = document.getElementById("btn-feedback-final-send");
+const feedbackFinalMessageEl = document.getElementById("feedback-final-message");
+const feedbackFinalSignatureEl = document.getElementById("feedback-final-signature");
 const feedbackFinalCloseBtn = document.getElementById("btn-quit");
-const feedbackFinalMessageEl = null;
-const feedbackFinalSignatureEl = null;
 
 console.assert(btnReadyEl, "❌ btn-ready introuvable");
 console.assert(btnStartRitualEl, "❌ btn-start-ritual introuvable");
@@ -1270,10 +1246,6 @@ function endRituel(){
 
   if (screenQuiz) screenQuiz.classList.add("hidden");
   if (screenResult) screenResult.classList.remove("hidden");
-
-  // ✅ Ouverture du panneau de sortie (feedback) — aucun écran intermédiaire
-  setTimeout(() => { try { openPostRitualPanel(); } catch(_){} }, 420);
-
 }
 
 );
@@ -1384,9 +1356,6 @@ try { window.Telegram?.WebApp?.close?.(); } catch (e) {
 
 console.log("✅ Listeners OK — boutons connectés");
 
-document.getElementById("post-ritual-text")?.addEventListener("input", (e) => { try { e.target.dataset.voTouched = "1"; } catch(_){} });
-
-
 
 if (feedbackFinalCloseBtn) {
   feedbackFinalCloseBtn.addEventListener("click", async () => {
@@ -1432,11 +1401,10 @@ if (feedbackFinalCloseBtn) {
     }
 
     // Closing UX (fixed transition)
-    try { closePostRitualPanel(); } catch(_) {}
-    try { showRitualClosing(); } catch(_) {}
+    finishRitualLoading(); // reuse the existing closing overlay
     setTimeout(() => {
       try { window.Telegram?.WebApp?.close(); } catch (_) {}
-      try { hideRitualClosing(); } catch(_) {}
-    }, 520);
-});
+      hideRitualLoading();
+    }, 900);
+  });
 }
