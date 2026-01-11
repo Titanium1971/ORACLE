@@ -22,40 +22,18 @@ const voTapGuard = (() => {
 let voOptionsArmedUntil = 0;
 const VO_OPTIONS_ARM_DELAY_MS = 220;
 
-
 // ===========================
-// VO — FADE TRANSITIONS (entre questions)
-// Opacité uniquement, sans slide/zoom. Local et minimal.
+// VO — MICRO-PAUSE ENTRE QUESTIONS
+// Silence visuel contrôlé avant la question suivante
 // ===========================
-const VO_FADE_OUT_MS = 180;
-const VO_FADE_IN_MS = 220;
-let voFadeBusy = false;
+const VO_MICRO_PAUSE_MIN_MS = 300;
+const VO_MICRO_PAUSE_MAX_MS = 600;
 
-function voGetQuizCard(){
-  return document.querySelector(".quiz-card") || document.getElementById("screen-quiz") || document.body;
+function voMicroPause() {
+  const delay = VO_MICRO_PAUSE_MIN_MS + Math.floor(Math.random() * (VO_MICRO_PAUSE_MAX_MS - VO_MICRO_PAUSE_MIN_MS + 1));
+  return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
-function voFadeTo(opacity, ms, cb){
-  const el = voGetQuizCard();
-  if (!el) { cb?.(); return; }
-  el.style.willChange = "opacity";
-  el.style.transition = `opacity ${ms}ms ease`;
-  el.style.opacity = String(opacity);
-  if (cb) setTimeout(cb, ms);
-}
-
-function renderQuestionWithFade(){
-  if (voFadeBusy) { renderQuestion(); return; }
-  voFadeBusy = true;
-  voFadeTo(0, VO_FADE_OUT_MS, () => {
-    try { renderQuestion(); } finally {
-      // prochain frame pour s'assurer que le DOM est posé avant fade-in
-      requestAnimationFrame(() => {
-        voFadeTo(1, VO_FADE_IN_MS, () => { voFadeBusy = false; });
-      });
-    }
-  });
-}
 
 
 // =========================================================================
@@ -936,7 +914,7 @@ function startRituel(){
   clearQuestionTimer();
   clearExplanationCountdown();
   startGlobalTimer();
-    renderQuestionWithFade();
+  renderQuestion();
 }
 
 function renderQuestion(){
