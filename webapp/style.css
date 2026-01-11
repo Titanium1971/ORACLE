@@ -978,18 +978,30 @@ body.font-standard .quiz-option-text{
 
 
 /* ===========================
-   VO — OPTION C : HALO TEMPOREL DISCRET
+   VO — TIMER NUMÉRIQUE MASQUÉ (UI seulement)
 =========================== */
-.question-halo {
-  position: absolute;
-  inset: -12px;
-  border-radius: 18px;
-  pointer-events: none;
-  box-shadow: 0 0 0 rgba(255,255,255,0);
-  transition: box-shadow 120ms linear, opacity 200ms ease;
-  opacity: 0.25;
+#quiz-timer,
+.quiz-timer{
+  display: none !important;
 }
 
-.question-halo.active {
+/* ===========================
+   VO — OPTION C : HALO TEMPOREL DISCRET (autour de la question)
+=========================== */
+#quiz-question{
+  position: relative;
+}
+
+.question-halo{
+  position: absolute;
+  inset: -10px;
+  border-radius: 16px;
+  pointer-events: none;
+  opacity: 0.0;
+  box-shadow: 0 0 0 rgba(255,255,255,0);
+  transition: box-shadow 120ms linear, opacity 200ms ease;
+}
+
+.question-halo.active{
   opacity: 0.35;
 }

@@ -688,7 +688,11 @@ function setRailProgress(remaining, total){
   if (!fill) return;
   const t = Math.max(1, total || 1);
   const r = Math.max(0, Math.min(remaining, t));
-  fill.style.transform = `scaleX(${r / t})`;
+  const frac = (r / t);
+  fill.style.transform = `scaleX(${frac})`;
+
+  // VO — Halo discret : p = 1 - fraction restante
+  voUpdateHaloFromProgress(1 - frac);
 }
 
 function spawnRipple(btn, event){
@@ -1388,30 +1392,28 @@ document.addEventListener(
 
 // ===========================
 // VO — OPTION C : HALO TEMPOREL DISCRET
-// Utilise le timer interne existant (sans chiffres)
+// Calé sur la progression de la barre (time-fill), sans chiffres.
 // ===========================
-(function initQuestionHalo(){
-  const host = document.querySelector('.question, .question-container, #question');
-  if (!host) return;
-  if (host.querySelector('.question-halo')) return;
-  const halo = document.createElement('div');
-  halo.className = 'question-halo';
-  host.style.position = host.style.position || 'relative';
-  host.appendChild(halo);
-})();
-
-function voUpdateHaloFromProgress(p){ // p: 0..1
-  const halo = document.querySelector('.question-halo');
-  if (!halo) return;
-  const intensity = Math.max(0, Math.min(1, 1 - p)); // plus discret au début
-  const spread = 18 + Math.round(22 * intensity);
-  const alpha = 0.10 + 0.18 * intensity;
-  halo.classList.add('active');
-  halo.style.boxShadow = `0 0 ${spread}px rgba(255, 215, 160, ${alpha})`;
+function voEnsureQuestionHalo(){
+  const host = document.getElementById("quiz-question");
+  if (!host) return null;
+  let halo = host.querySelector(".question-halo");
+  if (!halo){
+    halo = document.createElement("div");
+    halo.className = "question-halo";
+    host.appendChild(halo);
+  }
+  return halo;
 }
 
-// Hook non-invasif: si une barre de temps met à jour une variable de progression, on écoute un event custom.
-// Fallback: interval doux basé sur durée connue (si exposée)
-document.addEventListener('vo:time-progress', (e)=>{
-  if (typeof e.detail?.p === 'number') voUpdateHaloFromProgress(e.detail.p);
-});
+function voUpdateHaloFromProgress(p){ // p: 0..1 (0 début, 1 fin)
+  const halo = voEnsureQuestionHalo();
+  if (!halo) return;
+  const clamped = Math.max(0, Math.min(1, p));
+  // Intensité très douce : quasi invisible au début, un peu plus présente en fin.
+  const intensity = Math.pow(clamped, 1.6); // courbe Velvet (lente au début)
+  const spread = 14 + Math.round(20 * intensity);
+  const alpha  = 0.06 + 0.14 * intensity;
+  halo.classList.add("active");
+  halo.style.boxShadow = `0 0 ${spread}px rgba(255, 215, 160, ${alpha})`;
+}
