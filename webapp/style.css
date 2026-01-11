@@ -978,10 +978,18 @@ body.font-standard .quiz-option-text{
 
 
 /* ===========================
-   VO — POINT 7
-   Suppression du timer numérique visible (UI seulement)
+   VO — OPTION C : HALO TEMPOREL DISCRET
 =========================== */
-#quiz-timer,
-.quiz-timer{
-  display: none !important;
+.question-halo {
+  position: absolute;
+  inset: -12px;
+  border-radius: 18px;
+  pointer-events: none;
+  box-shadow: 0 0 0 rgba(255,255,255,0);
+  transition: box-shadow 120ms linear, opacity 200ms ease;
+  opacity: 0.25;
+}
+
+.question-halo.active {
+  opacity: 0.35;
 }

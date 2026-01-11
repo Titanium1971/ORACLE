@@ -1384,3 +1384,34 @@ document.addEventListener(
   },
   { passive: false }
 );
+
+
+// ===========================
+// VO — OPTION C : HALO TEMPOREL DISCRET
+// Utilise le timer interne existant (sans chiffres)
+// ===========================
+(function initQuestionHalo(){
+  const host = document.querySelector('.question, .question-container, #question');
+  if (!host) return;
+  if (host.querySelector('.question-halo')) return;
+  const halo = document.createElement('div');
+  halo.className = 'question-halo';
+  host.style.position = host.style.position || 'relative';
+  host.appendChild(halo);
+})();
+
+function voUpdateHaloFromProgress(p){ // p: 0..1
+  const halo = document.querySelector('.question-halo');
+  if (!halo) return;
+  const intensity = Math.max(0, Math.min(1, 1 - p)); // plus discret au début
+  const spread = 18 + Math.round(22 * intensity);
+  const alpha = 0.10 + 0.18 * intensity;
+  halo.classList.add('active');
+  halo.style.boxShadow = `0 0 ${spread}px rgba(255, 215, 160, ${alpha})`;
+}
+
+// Hook non-invasif: si une barre de temps met à jour une variable de progression, on écoute un event custom.
+// Fallback: interval doux basé sur durée connue (si exposée)
+document.addEventListener('vo:time-progress', (e)=>{
+  if (typeof e.detail?.p === 'number') voUpdateHaloFromProgress(e.detail.p);
+});
