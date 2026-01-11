@@ -18,6 +18,10 @@ const voTapGuard = (() => {
   };
 })();
 
+// VO — ANTI-REFLEXE (micro-délai d’armement des options)
+let voOptionsArmedUntil = 0;
+const VO_OPTIONS_ARM_DELAY_MS = 220;
+
 
 // =========================================================================
 // Velvet Typo Canon — Normalisation (Morena)
@@ -903,6 +907,9 @@ function startRituel(){
 function renderQuestion(){
   const q = QUIZ_DATA[currentIndex];
 
+  // Armement anti-réflexe : options cliquables seulement après un bref délai
+  voOptionsArmedUntil = Date.now() + VO_OPTIONS_ARM_DELAY_MS;
+
   if (quizQuestionEl) quizQuestionEl.textContent = velvetNormalize(q.question);
   if (quizMetaEl) quizMetaEl.textContent = `Domaine : ${q.domain}`;
   if (quizIndexEl) quizIndexEl.textContent = String(currentIndex + 1);
@@ -949,6 +956,7 @@ optionButtons.forEach(btn => {
   btn.addEventListener("click", (e) => {
     primeTickAudio();
     if (!voTapGuard.allow("quiz-option", 350)) return;
+    if (Date.now() < voOptionsArmedUntil) return;
     if (showingExplanation) return;
     spawnRipple(btn, e);
 
