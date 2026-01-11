@@ -269,16 +269,20 @@ const LETTERS = ["A","B","C","D"];
 const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
 if (tg && typeof tg.ready === "function") tg.ready();
 
+// ✅ Auto-expand gate: only keep forcing expand during the ritual screens
+let VO_AUTO_EXPAND_ENABLED = true;
+
+
 // ✅ TELEGRAM viewport guard
 try {
   const __tg = window.Telegram?.WebApp;
   if (__tg?.onEvent) {
     __tg.onEvent("viewportChanged", () => {
-      if (!__tg.isExpanded) __tg.expand?.();
+      if (VO_AUTO_EXPAND_ENABLED && !__tg.isExpanded) __tg.expand?.();
     });
   } else if (__tg?.onViewportChanged) {
     __tg.onViewportChanged(() => {
-      if (!__tg.isExpanded) __tg.expand?.();
+      if (VO_AUTO_EXPAND_ENABLED && !__tg.isExpanded) __tg.expand?.();
     });
   }
 } catch (e) {}
@@ -743,6 +747,7 @@ if (btnStartRitualEl) {
     window.Telegram?.WebApp?.requestFullscreen?.();
     setTimeout(() => window.Telegram?.WebApp?.expand(), 250);
     console.log("🟡 CLICK btn-start-ritual — démarrage rituel");
+    VO_AUTO_EXPAND_ENABLED = true;
     primeTickAudio();
     if (screenChamber) screenChamber.classList.add("hidden");
     if (screenQuiz) screenQuiz.classList.remove("hidden");
@@ -1151,6 +1156,9 @@ function endRituel(){
   if (resultScoreEl) resultScoreEl.textContent = `${finalScore} / ${TOTAL_QUESTIONS}`;
   if (resultTimeEl) resultTimeEl.textContent = formatSeconds(finalTotalSeconds);
 
+  // ✅ Stop forcing expand outside the ritual screen (mobile usability)
+  VO_AUTO_EXPAND_ENABLED = false;
+
   if (screenQuiz) screenQuiz.classList.add("hidden");
   if (screenResult) screenResult.classList.remove("hidden");
 }
@@ -1158,6 +1166,7 @@ function endRituel(){
 if (btnGoFeedback) {
   btnGoFeedback.addEventListener("click", () => {
     primeTickAudio();
+    VO_AUTO_EXPAND_ENABLED = false;
     if (screenResult) screenResult.classList.add("hidden");
     if (screenFeedbackFinal) screenFeedbackFinal.classList.remove("hidden");
   });
