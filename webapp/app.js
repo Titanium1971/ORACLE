@@ -396,9 +396,7 @@ async function ensureAttemptStarted(){
   const url = `${QUESTIONS_API_URL}/ritual/start`;
   const body = {
     mode: "rituel_full_v1",
-    telegram_user_id: ritualPlayerTelegramUserId || undefined,
-    telegram_username: getTelegramUsername() || undefined,
-    telegram_username: getTelegramUsername() || undefined
+    telegram_user_id: ritualPlayerTelegramUserId || undefined
   };
 
   try {
@@ -433,8 +431,6 @@ async function postRitualComplete(payload){
   const body = {
     attempt_id,
     telegram_user_id: ritualPlayerTelegramUserId || undefined,
-    telegram_username: getTelegramUsername() || undefined,
-    telegram_username: getTelegramUsername() || undefined,
     mode: payload?.mode || "rituel_full_v1",
     score_raw: Number.isFinite(Number(payload?.score)) ? Number(payload.score) : undefined,
     score_max: Number.isFinite(Number(payload?.total)) ? Number(payload.total) : undefined,

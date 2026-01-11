@@ -305,8 +305,6 @@ def format_answers_pretty(answers):
     return "\n".join(lines) if lines else "-"
 
 
-# NOTE: telegram_username accepted and may change over time
-
 def write_to_notion(payload):
     """Write ritual completion data to Notion"""
     if not NOTION_API_KEY or not NOTION_EXAMS_DB_ID:
