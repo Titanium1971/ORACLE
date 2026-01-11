@@ -1005,3 +1005,66 @@ body.font-standard .quiz-option-text{
 .question-halo.active{
   opacity: 0.35;
 }
+
+
+/* ===========================
+   VO — RING TEMPOREL (toujours visible, SAUF questions Signature)
+   Représentation non-numérique du temps (progression circulaire)
+=========================== */
+#quiz-question{ position: relative; }
+
+.vo-timer-ring{
+  position:absolute;
+  inset:-12px;
+  border-radius:16px;
+  pointer-events:none;
+  --p: 0; /* 0..1 */
+  opacity:0;
+  transition: opacity 180ms ease;
+  z-index: 3;
+}
+
+.vo-timer-ring.active{ opacity:0.38; }
+
+.vo-timer-ring::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  border-radius:inherit;
+  background: conic-gradient(
+    from -90deg,
+    rgba(200,169,106,0.40) calc(var(--p) * 1turn),
+    rgba(200,169,106,0.06) 0
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+}
+
+/* Texte au-dessus du ring */
+#quiz-question > *:not(.vo-timer-ring){
+  position: relative;
+  z-index: 4;
+}
+
+/* Sur Signature, on coupe le ring (doublon halo Signature) */
+.quiz-card.signature #quiz-question .vo-timer-ring{
+  display:none !important;
+  opacity:0 !important;
+}
+
+/* ===========================
+   VO — BARRE DE TEMPS SUPPRIMÉE
+   Ring = seule représentation temporelle
+=========================== */
+#time-rail,
+.time-rail{
+  display:none !important;
+}
+
+/* ===========================
+   VO — TIMER NUMÉRIQUE MASQUÉ (UI seulement)
+=========================== */
+#quiz-timer,
+.quiz-timer{
+  display:none !important;
+}

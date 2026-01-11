@@ -339,15 +339,6 @@ function getTelegramUserId(){
   return "";
 }
 
-function getTelegramUsername(){
-  try{
-    const u = tg?.initDataUnsafe?.user?.username;
-    if (u && String(u).length > 0) return String(u);
-  }catch(e){}
-  return "";
-}
-
-
 /** attempt_id local fallback (si /ritual/start absent) */
 function generateLocalAttemptId(){
   const rand = Math.random().toString(16).slice(2, 8);
@@ -395,8 +386,7 @@ async function ensureAttemptStarted(){
   const url = `${QUESTIONS_API_URL}/ritual/start`;
   const body = {
     mode: "rituel_full_v1",
-    telegram_user_id: ritualPlayerTelegramUserId || undefined,
-    telegram_username: getTelegramUsername() || undefined
+    telegram_user_id: ritualPlayerTelegramUserId || undefined
   };
 
   try {
@@ -703,7 +693,49 @@ function setRailProgress(remaining, total){
 
   // VO — Halo discret : p = 1 - fraction restante
   voUpdateHaloFromProgress(1 - frac);
+  // VO — Ring temporel : p = 1 - fraction restante
+  try{
+    const t2 = Math.max(1, total || 1);
+    const r2 = Math.max(0, Math.min(remaining, t2));
+    const fracRemaining = (r2 / t2);
+    voUpdateTimerRing(1 - fracRemaining);
+  }catch(e){}
+
 }
+
+
+// ===========================
+// VO — RING TEMPOREL (toujours visible, sauf Signature)
+// Sync sur le timer interne via setRailProgress()
+// ===========================
+function voEnsureTimerRing(){
+  const host = document.getElementById("quiz-question");
+  if (!host) return null;
+  if (!host.style.position) host.style.position = "relative";
+  let ring = host.querySelector(".vo-timer-ring");
+  if (!ring){
+    ring = document.createElement("div");
+    ring.className = "vo-timer-ring";
+    host.appendChild(ring);
+  }
+  return ring;
+}
+
+function voUpdateTimerRing(p){ // p: 0..1 (0 début, 1 fin)
+  const ring = voEnsureTimerRing();
+  if (!ring) return;
+  const clamped = Math.max(0, Math.min(1, p));
+  ring.classList.add("active");
+  ring.style.setProperty("--p", String(clamped));
+}
+
+function voResetTimerRing(){
+  const ring = voEnsureTimerRing();
+  if (!ring) return;
+  ring.classList.remove("active");
+  ring.style.setProperty("--p", "0");
+}
+
 
 function spawnRipple(btn, event){
   if (!btn) return;
@@ -902,6 +934,7 @@ function clearExplanationCountdown(){
 }
 
 function startQuestionTimer(){
+  try{ voResetTimerRing(); }catch(e){}
   clearQuestionTimer();
   clearExplanationCountdown();
 
@@ -960,6 +993,7 @@ function renderQuestion(){
   voOptionsArmedUntil = Date.now() + VO_OPTIONS_ARM_DELAY_MS;
 
   if (quizQuestionEl) quizQuestionEl.textContent = velvetNormalize(q.question);
+  try{ voEnsureTimerRing(); }catch(e){}
   if (quizMetaEl) quizMetaEl.textContent = `Domaine : ${q.domain}`;
   if (quizIndexEl) quizIndexEl.textContent = String(currentIndex + 1);
   if (quizTotalEl) quizTotalEl.textContent = String(TOTAL_QUESTIONS);
@@ -1293,7 +1327,6 @@ if (feedbackFinalSendBtn) {
     finalPayload.telegram_user_id = ritualPlayerTelegramUserId || getTelegramUserId() || null;
 
 
-    finalPayload.telegram_username = getTelegramUsername() || null;
     // ✅ 1) HTTP complete (Network visible)
     if (!finalPayloadHttpSent) {
       try {
