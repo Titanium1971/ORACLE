@@ -273,6 +273,31 @@ if (tg && typeof tg.ready === "function") tg.ready();
 let VO_AUTO_EXPAND_ENABLED = true;
 
 
+
+// =========================================================================
+// ✅ Velvet UX — Scroll lock (rituel)
+// =========================================================================
+let VO_SCROLL_LOCK_INSTALLED = false;
+
+function lockScroll() {
+  document.body.classList.add("vo-lock-scroll");
+  if (!VO_SCROLL_LOCK_INSTALLED) {
+    VO_SCROLL_LOCK_INSTALLED = true;
+    // iOS/Android: prevent scroll bounce during ritual
+    document.addEventListener(
+      "touchmove",
+      (e) => {
+        if (document.body.classList.contains("vo-lock-scroll")) e.preventDefault();
+      },
+      { passive: false }
+    );
+  }
+}
+
+function unlockScroll() {
+  document.body.classList.remove("vo-lock-scroll");
+}
+
 // ✅ TELEGRAM viewport guard
 try {
   const __tg = window.Telegram?.WebApp;
@@ -753,6 +778,9 @@ if (btnStartRitualEl) {
     window.Telegram?.WebApp?.requestFullscreen?.();
     setTimeout(() => window.Telegram?.WebApp?.expand(), 250);
     console.log("🟡 CLICK btn-start-ritual — démarrage rituel");
+    // ✅ UX: lock scroll during ritual
+    try { lockScroll(); } catch(e) {}
+
     VO_AUTO_EXPAND_ENABLED = true;
     primeTickAudio();
     if (screenChamber) screenChamber.classList.add("hidden");
@@ -1164,6 +1192,9 @@ function endRituel(){
 
   // ✅ Stop forcing expand outside the ritual screen (mobile usability)
   VO_AUTO_EXPAND_ENABLED = false;
+
+  // ✅ UX: unlock scroll after ritual
+  try { unlockScroll(); } catch(e) {}
 
   if (screenQuiz) screenQuiz.classList.add("hidden");
   if (screenResult) screenResult.classList.remove("hidden");
