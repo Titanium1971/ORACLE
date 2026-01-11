@@ -976,21 +976,12 @@ body.font-standard .quiz-option-text{
   color: rgba(200, 169, 106, 0.45);
 }
 
+
 /* ===========================
-   VO — SCROLL LOCK (SAFE FIX)
-============================ */
-body.vo-lock-scroll{
-  height: 100dvh;
-  overflow: hidden;
-}
-
-body.vo-lock-scroll .frame{
-  height: 100%;
-  display: flex;
-}
-
-body.vo-lock-scroll .card{
-  max-height: 100%;
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
+   VO — POINT 7
+   Suppression du timer numérique visible (UI seulement)
+=========================== */
+#quiz-timer,
+.quiz-timer{
+  display: none !important;
 }
