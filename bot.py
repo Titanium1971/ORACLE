@@ -474,17 +474,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # ✅ On n'empêche jamais l'accès au rituel ici (BETA): message info seulement
     if has_already_taken_exam(joueur_id, mode="Prod") and not admin:
-        await msg.reply_text("🕯️ Accès au rituel réouvert. (ancienne restriction levée)")
+        await msg.reply_text("🕯️ Accès au rituel disponible.")
 
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton(
-            text="Lancer le Rituel Velvet Oracle",
+            text="Ouvrir le rituel",
             web_app=WebAppInfo(url=webapp_url),
         )
     ]])
 
     await msg.reply_text(
-        "🕯️ Lorsque tu es prêt, touche le bouton ci-dessous.",
+        "🕯️ Le rituel est prêt.\nTouche le bouton ci-dessous pour l’ouvrir.",
         reply_markup=keyboard,
     )
 
@@ -602,8 +602,8 @@ async def handle_webapp_data(update: Update,
             username_telegram=username,
             version_bot=payload_mode)
 
-        await msg.reply_text("🕯️ Payload reçu. Trace inscrite." if page_id else
-                             "❌ Payload reçu, mais Notion a refusé.")
+        await msg.reply_text("🕯️ Données reçues. Trace inscrite." if page_id else
+                             "❌ Données reçues, mais l’enregistrement a échoué.")
         return
 
     # 2) FEEDBACK (update dernière page)
@@ -628,16 +628,16 @@ async def handle_webapp_data(update: Update,
                 nom_utilisateur=full_name,
                 username_telegram=username,
                 version_bot="rituel_feedback_v1")
-            await msg.reply_text("🕯️ Feedback noté." if created else
-                                 "❌ Feedback reçu, mais Notion a refusé.")
+            await msg.reply_text("🕯️ Commentaire enregistré." if created else
+                                 "❌ Commentaire reçu, mais l’enregistrement a échoué.")
             return
 
         ok = update_exam_feedback(page_id, feedback_text)
-        await msg.reply_text("🕯️ Feedback noté." if ok else
-                             "❌ Feedback reçu, mais Notion a refusé.")
+        await msg.reply_text("🕯️ Commentaire enregistré." if ok else
+                             "❌ Commentaire reçu, mais l’enregistrement a échoué.")
         return
 
-    await msg.reply_text("Payload reçu mais mode inconnu.")
+    await msg.reply_text("Données reçues, mais mode non reconnu.")
     logger.warning("Mode inconnu: %s", payload_mode)
 
 
