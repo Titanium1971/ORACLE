@@ -31,7 +31,8 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     ReplyKeyboardRemove,
-    MenuButtonWebApp)
+    MenuButtonWebApp,
+    MenuButtonDefault)
 from telegram.ext import (
     Application,
     CommandHandler,
