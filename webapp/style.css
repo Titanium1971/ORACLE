@@ -376,8 +376,8 @@ button, input, textarea, select{
       rgba(200,169,106,0.18) 330deg,
       rgba(200,169,106,0.00) 360deg
     );
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 2px));
   animation: velvetClockRing 110s linear infinite;
   opacity:0.95;
 }
@@ -974,66 +974,4 @@ body.font-standard .quiz-option-text{
   font-size: 12px;
   letter-spacing: 0.02em;
   color: rgba(200, 169, 106, 0.45);
-}
-
-
-/* ===========================
-   VO — HALO RING TEMPOREL (autour de la question)
-   Représentation non-numérique du temps (progression circulaire)
-=========================== */
-#quiz-question{
-  position: relative;
-}
-
-.vo-timer-ring{
-  position: absolute;
-  inset: -12px;
-  border-radius: 16px;
-  pointer-events: none;
-
-  --p: 0; /* 0..1 */
-  opacity: 0;
-  transition: opacity 180ms ease;
-  z-index: 0;
-}
-
-.vo-timer-ring.active{
-  opacity: 0.38;
-}
-
-.vo-timer-ring::before{
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-
-  background: conic-gradient(
-    from -90deg,
-    rgba(200,169,106,0.40) calc(var(--p) * 1turn),
-    rgba(200,169,106,0.06) 0
-  );
-
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
-}
-
-
-
-/* ===========================
-   VO — SUPPRESSION TOTALE DE LA BARRE DE TEMPS
-   Anneau = seule représentation temporelle
-=========================== */
-#time-rail,
-.time-rail{
-  display: none !important;
-}
-
-
-
-/* ===========================
-   VO — TIMER NUMÉRIQUE MASQUÉ (UI seulement)
-=========================== */
-#quiz-timer,
-.quiz-timer{
-  display: none !important;
 }
