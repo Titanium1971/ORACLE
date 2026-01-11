@@ -409,7 +409,7 @@ button, input, textarea, select{
       rgba(0,0,0,0.18) 72%,
       rgba(0,0,0,0.38) 100%
     );
-  opacity: 0.38;
+  opacity:0.55;
   mix-blend-mode: multiply;
   z-index:2;
 }
@@ -476,7 +476,7 @@ button, input, textarea, select{
   margin-top:12px;
   height:2px;
   border-radius:999px;
-  background: rgba(200,169,106,0.10);
+  background: rgba(200,169,106,0.06);
   overflow:hidden;
   position:relative;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
@@ -678,7 +678,7 @@ body.font-standard .quiz-option-text{
     transition: opacity .18s ease-out;
     box-shadow:
       inset 0 0 0 1px rgba(200,169,106,0.28),
-      inset 0 0 0 2px rgba(200,169,106,0.10);
+      inset 0 0 0 2px rgba(200,169,106,0.06);
   }
   .quiz-option:hover::after{ opacity:1; }
 }
@@ -974,4 +974,13 @@ body.font-standard .quiz-option-text{
   font-size: 12px;
   letter-spacing: 0.02em;
   color: rgba(200, 169, 106, 0.45);
+}
+
+
+/* ===========================
+   VO — SUPPRESSION TOTALE DE LA BARRE DE TEMPS
+=========================== */
+#time-rail,
+.time-rail{
+  display: none !important;
 }
