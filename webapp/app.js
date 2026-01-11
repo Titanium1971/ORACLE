@@ -989,9 +989,18 @@ function resolveCurrentQuestion(forceTimeout=false){
 
   let resultLabel = "";
   let resultClass = "";
-  if (isTimeout){ resultLabel = "Temps écoulé"; resultClass = "timeout"; }
-  else if (isCorrect){ resultLabel = "Bonne réponse"; resultClass = "good"; }
-  else { resultLabel = "Mauvaise réponse"; resultClass = "bad"; }
+  if (isTimeout){
+    resultLabel = "Réponse enregistrée (temps écoulé)";
+    resultClass = "timeout";
+  }
+  else if (isCorrect){
+    resultLabel = "Réponse validée";
+    resultClass = "good";
+  }
+  else {
+    resultLabel = "Réponse non retenue";
+    resultClass = "bad";
+  }
 
   if (quizExplanationEl){
     quizExplanationEl.innerHTML = `
