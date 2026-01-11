@@ -29,13 +29,6 @@ const VO_OPTIONS_ARM_DELAY_MS = 220;
 const VO_MICRO_PAUSE_MIN_MS = 300;
 const VO_MICRO_PAUSE_MAX_MS = 600;
 
-
-// ===========================
-// VO — APPARITION PROGRESSIVE DES RÉPONSES (SOFT)
-// Opacité progressive, sans déplacement
-// ===========================
-const VO_OPTION_STAGGER_MS = 140;
-
 function voMicroPause() {
   const delay = VO_MICRO_PAUSE_MIN_MS + Math.floor(Math.random() * (VO_MICRO_PAUSE_MAX_MS - VO_MICRO_PAUSE_MIN_MS + 1));
   return new Promise((resolve) => setTimeout(resolve, delay));
@@ -749,6 +742,28 @@ const quizMetaEl = document.getElementById("quiz-meta");
 const quizTimerEl = document.getElementById("quiz-timer");
 const quizExplanationEl = document.getElementById("quiz-explanation");
 const optionButtons = document.querySelectorAll(".quiz-option");
+
+// ===========================
+// VO — APPARITION PROGRESSIVE DES RÉPONSES (SOFT)
+// Opacité progressive, sans déplacement
+// ===========================
+const VO_OPTION_STAGGER_MS = 140;
+const VO_OPTION_FADE_MS = 180;
+
+function voSoftStaggerOptions(){
+  try{
+    const opts = Array.from(optionButtons || []);
+    // Reset
+    opts.forEach((el) => {
+      el.style.opacity = "0";
+      el.style.transition = `opacity ${VO_OPTION_FADE_MS}ms ease-out`;
+    });
+    // Stagger in
+    opts.forEach((el, i) => {
+      setTimeout(() => { el.style.opacity = "1"; }, i * VO_OPTION_STAGGER_MS);
+    });
+  }catch(e){}
+}
 const btnNext = document.getElementById("btn-next");
 const quizCorrectCountEl = document.getElementById("quiz-correct-count");
 const quizCurrentIndexEl = document.getElementById("quiz-current-index");
@@ -931,18 +946,7 @@ function renderQuestion(){
   voOptionsArmedUntil = Date.now() + VO_OPTIONS_ARM_DELAY_MS;
 
   if (quizQuestionEl) quizQuestionEl.textContent = velvetNormalize(q.question);
-  if (quizMetaEl) quizMetaEl.textContent = `Domaine : ${q.domain
-  // VO — soft stagger options
-  requestAnimationFrame(() => {
-    const opts = Array.from(document.querySelectorAll('.quiz-option, .option, [data-option]'));
-    opts.forEach((el, i) => {
-      el.style.opacity = '0';
-      el.style.transition = 'opacity 180ms ease-out';
-      setTimeout(() => { el.style.opacity = '1'; }, i * VO_OPTION_STAGGER_MS);
-    });
-  });
-}
-`;
+  if (quizMetaEl) quizMetaEl.textContent = `Domaine : ${q.domain}`;
   if (quizIndexEl) quizIndexEl.textContent = String(currentIndex + 1);
   if (quizTotalEl) quizTotalEl.textContent = String(TOTAL_QUESTIONS);
 
@@ -952,18 +956,7 @@ function renderQuestion(){
   if (quizExplanationEl){
     quizExplanationEl.classList.add("hidden");
     quizExplanationEl.innerHTML = "";
-  
-  // VO — soft stagger options
-  requestAnimationFrame(() => {
-    const opts = Array.from(document.querySelectorAll('.quiz-option, .option, [data-option]'));
-    opts.forEach((el, i) => {
-      el.style.opacity = '0';
-      el.style.transition = 'opacity 180ms ease-out';
-      setTimeout(() => { el.style.opacity = '1'; }, i * VO_OPTION_STAGGER_MS);
-    });
-  });
-}
-
+  }
   pendingAnswer = null;
 
   clearExplanationCountdown();
@@ -979,18 +972,7 @@ function renderQuestion(){
     if (txt) txt.textContent = velvetNormalize(q.options[realIndex] ?? "");
 
     btn.classList.remove("selected","disabled","correct","wrong","timeout","shake");
-  
-  // VO — soft stagger options
-  requestAnimationFrame(() => {
-    const opts = Array.from(document.querySelectorAll('.quiz-option, .option, [data-option]'));
-    opts.forEach((el, i) => {
-      el.style.opacity = '0';
-      el.style.transition = 'opacity 180ms ease-out';
-      setTimeout(() => { el.style.opacity = '1'; }, i * VO_OPTION_STAGGER_MS);
-    });
   });
-}
-);
 
   const wrap = document.getElementById("quiz-options");
   if (wrap) wrap.classList.remove("veil");
@@ -999,33 +981,13 @@ function renderQuestion(){
   if (btnNext){
     btnNext.disabled = true;
     btnNext.textContent = (currentIndex === TOTAL_QUESTIONS - 1) ? "Terminer le rituel" : "Valider la réponse";
-  
-  // VO — soft stagger options
-  requestAnimationFrame(() => {
-    const opts = Array.from(document.querySelectorAll('.quiz-option, .option, [data-option]'));
-    opts.forEach((el, i) => {
-      el.style.opacity = '0';
-      el.style.transition = 'opacity 180ms ease-out';
-      setTimeout(() => { el.style.opacity = '1'; }, i * VO_OPTION_STAGGER_MS);
-    });
-  });
-}
-
+  }
+  // VO — apparition progressive des options (soft)
+  requestAnimationFrame(() => voSoftStaggerOptions());
 
   updateCorrectCounter();
   startQuestionTimer();
-
-  // VO — soft stagger options
-  requestAnimationFrame(() => {
-    const opts = Array.from(document.querySelectorAll('.quiz-option, .option, [data-option]'));
-    opts.forEach((el, i) => {
-      el.style.opacity = '0';
-      el.style.transition = 'opacity 180ms ease-out';
-      setTimeout(() => { el.style.opacity = '1'; }, i * VO_OPTION_STAGGER_MS);
-    });
-  });
 }
-
 
 optionButtons.forEach(btn => {
   btn.addEventListener("click", (e) => {
