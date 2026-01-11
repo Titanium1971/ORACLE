@@ -864,8 +864,8 @@ body.font-standard .quiz-option-text{
 }
 
 .ritual-ring{
-  width: 96px;
-  height: 96px;
+  width: 64px;
+  height: 64px;
   border-radius: 999px;
   position: relative;
   overflow: hidden;
@@ -874,20 +874,20 @@ body.font-standard .quiz-option-text{
 .ritual-ring::before{
   content:"";
   position:absolute;
-  inset:-3px;
+  inset:-2px;
   border-radius:999px;
-  border: 2px solid rgba(200,169,106,.32);
-  border-top-color: rgba(200,169,106,.95);
-  box-shadow: 0 0 36px rgba(200,169,106,.18);
+  border: 1px solid rgba(200,169,106,.32);
+  border-top-color: rgba(200,169,106,.88);
+  box-shadow: 0 0 26px rgba(200,169,106,.08);
   animation: ritualSpin 2.2s linear infinite;
 }
 
 .ritual-text{
-  font-size: 16px;
-  letter-spacing: .18em;
+  font-size: 11px;
+  letter-spacing: .28em;
   text-transform: uppercase;
   font-weight: 700;
-  color: rgba(228,201,140,.85);
+  color: rgba(228,201,140,.70);
 }
 
 @keyframes ritualSpin{
