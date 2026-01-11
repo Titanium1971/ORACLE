@@ -1139,11 +1139,11 @@ function endRituel(){
 
   let verdictTitle, verdictSubtitle;
   if (finalScore >= 12){
-    verdictTitle = "Admission potentielle";
-    verdictSubtitle = "Ton niveau rejoint un cercle restreint. Le reste se joue dans la durée.";
+    verdictTitle = "Parcours observé";
+    verdictSubtitle = "Ce rituel apporte des éléments d’observation sur ton parcours.";
   } else {
-    verdictTitle = "Rituel non validé";
-    verdictSubtitle = "Ce n’est pas une fin, seulement un instantané de ton niveau aujourd’hui.";
+    verdictTitle = "Parcours enregistré";
+    verdictSubtitle = "Chaque rituel constitue un instant dans le temps.";
   }
 
   if (resultTitleEl) resultTitleEl.textContent = verdictTitle;
