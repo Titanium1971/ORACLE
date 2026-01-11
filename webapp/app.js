@@ -822,7 +822,7 @@ function startQuestionTimer(){
   clearExplanationCountdown();
 
   const signature = isSignatureIndex(currentIndex);
-  const seconds = signature ? 60 : 45;
+  const seconds = 60;
 
   questionRemaining = seconds;
 
@@ -1058,7 +1058,7 @@ function resolveCurrentQuestion(forceTimeout=false){
   pendingAnswer = { question_id: q.id, choice_index: choiceIndex, choice_letter: choiceLetter };
 
   const signature = isSignatureIndex(currentIndex);
-  explanationRemaining = signature ? 60 : 45;
+  explanationRemaining = 60;
 
   railTotalSeconds = explanationRemaining;
   setRailMode("lecture");
