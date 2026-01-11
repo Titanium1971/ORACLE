@@ -350,7 +350,7 @@ button, input, textarea, select{
 }
 
 .quiz-card.signature{
-  border-color: rgba(200,169,106,0.60);
+  border-color: rgba(200,169,106,0.40);
   box-shadow:
     0 30px 80px rgba(0,0,0,0.96),
     0 0 0 1px rgba(255,255,255,0.02),
@@ -387,7 +387,7 @@ button, input, textarea, select{
   border-radius:18px;
   border:1px solid rgba(200,169,106,0.42);
   box-shadow:
-    0 0 10px rgba(200,169,106,0.12),
+    0 0 10px rgba(200,169,106,0.06),
     0 0 28px rgba(200,169,106,0.08);
   pointer-events:none;
   z-index:3;
@@ -409,7 +409,7 @@ button, input, textarea, select{
       rgba(0,0,0,0.18) 72%,
       rgba(0,0,0,0.38) 100%
     );
-  opacity:0.55;
+  opacity: 0.38;
   mix-blend-mode: multiply;
   z-index:2;
 }
@@ -494,7 +494,7 @@ button, input, textarea, select{
 }
 .time-rail.lecture .time-fill{
   opacity:0.75;
-  filter: drop-shadow(0 0 6px rgba(200,169,106,0.12));
+  filter: drop-shadow(0 0 6px rgba(200,169,106,0.06));
 }
 .quiz-card.signature .time-rail{ background: rgba(200,169,106,0.14); }
 
@@ -974,53 +974,4 @@ body.font-standard .quiz-option-text{
   font-size: 12px;
   letter-spacing: 0.02em;
   color: rgba(200, 169, 106, 0.45);
-}
-
-
-/* ===========================
-   VO — HALO RING TEMPOREL (autour de la question)
-   Représentation non-numérique du temps (progression circulaire en 12 paliers)
-=========================== */
-#quiz-question{
-  position: relative;
-}
-
-.vo-timer-ring{
-  position: absolute;
-  inset: -12px;
-  border-radius: 16px;
-  pointer-events: none;
-
-  --p: 0; /* 0..1 */
-  opacity: 0;
-  transition: opacity 180ms ease;
-}
-
-.vo-timer-ring.active{
-  opacity: 0.55;
-}
-
-.vo-timer-ring::before{
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-
-  background: conic-gradient(
-    from -90deg,
-    rgba(200,169,106,0.60) calc(var(--p) * 1turn),
-    rgba(200,169,106,0.12) 0
-  );
-
-  /* Ring thickness */
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
-}
-
-/* ===========================
-   VO — SUPPRESSION TOTALE DE LA BARRE DE TEMPS
-=========================== */
-#time-rail,
-.time-rail{
-  display: none !important;
 }
