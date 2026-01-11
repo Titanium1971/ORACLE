@@ -818,6 +818,25 @@ def upsert_player_by_telegram_user_id(players_table, telegram_user_id):
     return {"ok": False, "error": created}
 
 
+def maybe_update_player_username(players_table, player_record_id, telegram_username):
+    """Best-effort: write telegram_username on every interaction (can change).
+    Never blocks the ritual flow.
+    """
+    try:
+        if not telegram_username:
+            return {"ok": True, "skipped": True}
+        fields = {"telegram_username": str(telegram_username)}
+        res = airtable_update(players_table, str(player_record_id), fields)
+        if not res.get("ok"):
+            print("🟠 username_update_failed =", res)
+        else:
+            print("🟢 username_updated =", telegram_username)
+        return res
+    except Exception as e:
+        print("🟠 username_update_exception =", repr(e))
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/__routes")
 def __routes():
     return jsonify({
@@ -861,6 +880,9 @@ def ritual_start():
                 "error": "player_upsert_failed",
                 "details": p
             }), 500
+
+        # ✅ Update telegram_username if provided (can change over time)
+        maybe_update_player_username(players_table, p.get('record_id'), payload.get('telegram_username') or payload.get('telegramUsername'))
 
         # Translate mode for Airtable (app.js sends "rituel_full_v1" but Airtable expects "PROD" or "TEST")
         raw_mode = payload.get("mode") or payload.get("env") or "BETA"
@@ -989,6 +1011,9 @@ def ritual_complete():
             "error": "player_upsert_failed",
             "details": p
         }), 500
+
+    # ✅ Update telegram_username if provided (can change over time)
+    maybe_update_player_username(players_table, p.get('record_id'), payload.get('telegram_username') or payload.get('telegramUsername'))
 
     # 1) Log raw payload (always)
     raw_fields = {
