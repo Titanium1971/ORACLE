@@ -796,16 +796,6 @@ def airtable_update(table, record_id, fields):
     return {"ok": r.status_code < 300, "status": r.status_code, "data": data}
 
 
-
-def maybe_update_player_username(players_table, player_record_id, telegram_username):
-    try:
-        if not telegram_username:
-            return None
-        fields = {"telegram_username": str(telegram_username)}
-        return airtable_update(players_table, str(player_record_id), fields)
-    except Exception:
-        return None
-
 def upsert_player_by_telegram_user_id(players_table, telegram_user_id):
     # players.telegram_user_id is the upsert key (locked mapping)
     formula = f"{{telegram_user_id}}='{telegram_user_id}'"
@@ -826,6 +816,21 @@ def upsert_player_by_telegram_user_id(players_table, telegram_user_id):
             "record_id": created["data"]["id"]
         }
     return {"ok": False, "error": created}
+
+
+def maybe_update_player_username(players_table, player_record_id, telegram_username):
+    """Best-effort: writes telegram_username to players table if provided.
+    - never blocks the ritual flow
+    - overwrites if user changed username
+    """
+    try:
+        if not telegram_username:
+            return {"ok": True, "skipped": True}
+        fields = {"telegram_username": str(telegram_username)}
+        return airtable_update(players_table, str(player_record_id), fields)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 
 
 @app.get("/__routes")
@@ -865,6 +870,7 @@ def ritual_start():
 
         p = upsert_player_by_telegram_user_id(players_table,
                                               str(telegram_user_id))
+        # ✅ Update telegram_username if provided (can change over time)
         maybe_update_player_username(players_table, p.get('record_id'), payload.get('telegram_username') or payload.get('telegramUsername'))
         if not p.get("ok"):
             return jsonify({
@@ -994,6 +1000,7 @@ def ritual_complete():
     feedback_table = _core_table_name("AIRTABLE_FEEDBACK_TABLE", "rituel_feedback", "BETA_AIRTABLE_FEEDBACK_TABLE_ID")
 
     p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
+    # ✅ Update telegram_username if provided (can change over time)
     maybe_update_player_username(players_table, p.get('record_id'), payload.get('telegram_username') or payload.get('telegramUsername'))
     if not p.get("ok"):
         return jsonify({
