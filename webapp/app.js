@@ -269,9 +269,23 @@ const LETTERS = ["A","B","C","D"];
 const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
 if (tg && typeof tg.ready === "function") tg.ready();
 
+// ✅ Auto-expand gate: only keep forcing expand during the ritual screens
+let VO_AUTO_EXPAND_ENABLED = true;
 
 
-// ✅ TELEGRAM viewport guard disabled (no forced expand)
+// ✅ TELEGRAM viewport guard
+try {
+  const __tg = window.Telegram?.WebApp;
+  if (__tg?.onEvent) {
+    __tg.onEvent("viewportChanged", () => {
+      if (VO_AUTO_EXPAND_ENABLED && !__tg.isExpanded) __tg.expand?.();
+    });
+  } else if (__tg?.onViewportChanged) {
+    __tg.onViewportChanged(() => {
+      if (VO_AUTO_EXPAND_ENABLED && !__tg.isExpanded) __tg.expand?.();
+    });
+  }
+} catch (e) {}
 
 applyFontMode(getSavedFontMode());
 
@@ -729,7 +743,11 @@ if (btnReadyEl) {
 
 if (btnStartRitualEl) {
   btnStartRitualEl.addEventListener("click", async () => {
+    window.Telegram?.WebApp?.expand();
+    window.Telegram?.WebApp?.requestFullscreen?.();
+    setTimeout(() => window.Telegram?.WebApp?.expand(), 250);
     console.log("🟡 CLICK btn-start-ritual — démarrage rituel");
+    VO_AUTO_EXPAND_ENABLED = true;
     primeTickAudio();
     if (screenChamber) screenChamber.classList.add("hidden");
     if (screenQuiz) screenQuiz.classList.remove("hidden");
@@ -738,6 +756,10 @@ if (btnStartRitualEl) {
     try { setLiveScoreVisibility(false); } catch(e) {}
     try { updateCorrectCounter(); } catch(e) {}
 
+    requestAnimationFrame(() => {
+      window.Telegram?.WebApp?.expand?.();
+      setTimeout(() => window.Telegram?.WebApp?.expand?.(), 250);
+    });
 
     // ✅ UX latence : couvre /ritual/start + /questions/random
     showRitualLoading();
@@ -1135,6 +1157,7 @@ function endRituel(){
   if (resultTimeEl) resultTimeEl.textContent = formatSeconds(finalTotalSeconds);
 
   // ✅ Stop forcing expand outside the ritual screen (mobile usability)
+  VO_AUTO_EXPAND_ENABLED = false;
 
   if (screenQuiz) screenQuiz.classList.add("hidden");
   if (screenResult) screenResult.classList.remove("hidden");
@@ -1143,6 +1166,7 @@ function endRituel(){
 if (btnGoFeedback) {
   btnGoFeedback.addEventListener("click", () => {
     primeTickAudio();
+    VO_AUTO_EXPAND_ENABLED = false;
     if (screenResult) screenResult.classList.add("hidden");
     if (screenFeedbackFinal) screenFeedbackFinal.classList.remove("hidden");
   });
