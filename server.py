@@ -24,6 +24,160 @@ from flask_cors import CORS
 
 CORS(app, resources={r"/*": {"origins": "*"}})
 
+# ================================================================
+# Telegram Bot — Webhook mode (Publish via gunicorn)
+# ------------------------------------------------
+# Goal: Run & Publish behave the same by letting gunicorn serve the webhook.
+# - No polling in Publish.
+# - The bot handlers come from bot.py (texts/logic stay in one place).
+#
+# ENV required:
+#   TELEGRAM_BOT_TOKEN
+# Optional:
+#   TELEGRAM_WEBHOOK_SECRET  (recommended)
+#
+# Routes:
+#   POST /telegram/webhook/<secret?>
+#   GET  /telegram/webhook/status
+#   POST /telegram/webhook/set   (best-effort; needs public HTTPS URL)
+# ================================================================
+import asyncio
+import threading
+
+_TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+_TELEGRAM_SECRET = (os.getenv("TELEGRAM_WEBHOOK_SECRET") or "").strip()
+_TELEGRAM_APP = None
+_TELEGRAM_LOOP = None
+_TELEGRAM_LOOP_THREAD = None
+
+
+def _ensure_event_loop_thread():
+    """Start a dedicated asyncio loop in a background thread (one per gunicorn worker)."""
+    global _TELEGRAM_LOOP, _TELEGRAM_LOOP_THREAD
+
+    if _TELEGRAM_LOOP and _TELEGRAM_LOOP.is_running():
+        return
+
+    _TELEGRAM_LOOP = asyncio.new_event_loop()
+
+    def _runner(loop):
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+
+    _TELEGRAM_LOOP_THREAD = threading.Thread(
+        target=_runner, args=(_TELEGRAM_LOOP,), name="telegram-webhook-loop", daemon=True
+    )
+    _TELEGRAM_LOOP_THREAD.start()
+
+
+async def _init_telegram_app():
+    """Initialize python-telegram-bot Application once (handlers imported from bot.py)."""
+    global _TELEGRAM_APP
+
+    if _TELEGRAM_APP is not None:
+        return _TELEGRAM_APP
+
+    if not _TELEGRAM_TOKEN:
+        return None
+
+    # Import handlers (no side effects: bot.py only starts polling under __main__)
+    from telegram.ext import Application, CommandHandler, MessageHandler, TypeHandler, filters
+    from telegram import Update as TgUpdate
+
+    from bot import start as tg_start
+    from bot import whoami as tg_whoami
+    from bot import handle_webapp_data as tg_handle_webapp_data
+    from bot import debug_any_update as tg_debug_any_update
+
+    app_ = Application.builder().token(_TELEGRAM_TOKEN).build()
+    app_.add_handler(CommandHandler("start", tg_start))
+    app_.add_handler(CommandHandler("whoami", tg_whoami))
+    app_.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, tg_handle_webapp_data))
+    app_.add_handler(TypeHandler(TgUpdate, tg_debug_any_update), group=-1)
+
+    await app_.initialize()
+    await app_.start()
+    _TELEGRAM_APP = app_
+    print("🟣 TELEGRAM WEBHOOK READY (application initialized)", flush=True)
+    return _TELEGRAM_APP
+
+
+def _run_coro(coro):
+    """Run a coroutine on the dedicated loop and wait for result (sync Flask context)."""
+    _ensure_event_loop_thread()
+    fut = asyncio.run_coroutine_threadsafe(coro, _TELEGRAM_LOOP)
+    return fut.result(timeout=20)
+
+
+@app.get("/telegram/webhook/status")
+def telegram_webhook_status():
+    return jsonify({
+        "ok": True,
+        "token_set": bool(_TELEGRAM_TOKEN),
+        "secret_set": bool(_TELEGRAM_SECRET),
+        "app_initialized": _TELEGRAM_APP is not None,
+    }), 200
+
+
+@app.post("/telegram/webhook")
+@app.post("/telegram/webhook/<secret>")
+def telegram_webhook(secret=None):
+    # Optional shared secret check (recommended)
+    if _TELEGRAM_SECRET:
+        if not secret or secret != _TELEGRAM_SECRET:
+            return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    if not _TELEGRAM_TOKEN:
+        return jsonify({"ok": False, "error": "missing_TELEGRAM_BOT_TOKEN"}), 500
+
+    data = request.get_json(silent=True) or {}
+    try:
+        tg_app = _run_coro(_init_telegram_app())
+        if tg_app is None:
+            return jsonify({"ok": False, "error": "telegram_app_init_failed"}), 500
+
+        from telegram import Update as TgUpdate
+        update = TgUpdate.de_json(data, tg_app.bot)
+        # process_update is async
+        _run_coro(tg_app.process_update(update))
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        print(f"❌ telegram_webhook error: {e}", flush=True)
+        return jsonify({"ok": False, "error": "telegram_webhook_exception", "message": str(e)[:300]}), 500
+
+
+@app.post("/telegram/webhook/set")
+def telegram_webhook_set():
+    """
+    Best-effort webhook setter.
+    Builds URL from request.host_url (must be public HTTPS in Publish).
+    """
+    if not _TELEGRAM_TOKEN:
+        return jsonify({"ok": False, "error": "missing_TELEGRAM_BOT_TOKEN"}), 500
+
+    base = request.host_url.rstrip("/")
+    path = "/telegram/webhook"
+    if _TELEGRAM_SECRET:
+        path += f"/{_TELEGRAM_SECRET}"
+    webhook_url = base + path
+
+    try:
+        # Telegram setWebhook endpoint (no extra deps; use requests)
+        r = requests.post(
+            f"https://api.telegram.org/bot{_TELEGRAM_TOKEN}/setWebhook",
+            json={"url": webhook_url, "drop_pending_updates": False},
+            timeout=20,
+        )
+        return jsonify({
+            "ok": r.status_code == 200,
+            "status_code": r.status_code,
+            "webhook_url": webhook_url,
+            "telegram": (r.json() if r.headers.get("content-type","").startswith("application/json") else {"raw": r.text[:300]}),
+        }), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": "setWebhook_failed", "message": str(e)}), 500
+
+
 # -----------------------------------------------------
 # ✅ Request logger (debug) — traces whether devices hit this backend
 # -----------------------------------------------------
