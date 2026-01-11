@@ -718,6 +718,12 @@ const resultTimeEl = document.getElementById("result-time");
 const btnGoFeedback = document.getElementById("btn-go-feedback");
 
 const feedbackFinalTextEl = document.getElementById("feedback-final-text");
+
+// ✅ Mobile UX: prevent any fullscreen/expand forcing when keyboard opens on feedback
+if (feedbackFinalTextEl){
+  feedbackFinalTextEl.addEventListener("focus", () => { try { VO_AUTO_EXPAND_ENABLED = false; } catch(e) {} });
+}
+
 const feedbackFinalSendBtn = document.getElementById("btn-feedback-final-send");
 const feedbackFinalMessageEl = document.getElementById("feedback-final-message");
 const feedbackFinalSignatureEl = document.getElementById("feedback-final-signature");
