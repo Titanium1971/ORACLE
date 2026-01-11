@@ -129,6 +129,15 @@ def telegram_webhook(secret=None):
 
     if not _TELEGRAM_TOKEN:
         return jsonify({"ok": False, "error": "missing_TELEGRAM_BOT_TOKEN"}), 500
+    # Ensure Telegram app is initialized (lazy init on first webhook call)
+    global _TELEGRAM_APP
+    if _TELEGRAM_APP is None:
+        try:
+            _TELEGRAM_APP = _run_coro(_init_telegram_app())
+        except Exception as e:
+            print("🔴 TELEGRAM INIT FAILED:", repr(e), flush=True)
+            return jsonify({"ok": False, "error": "telegram_app_init_failed"}), 500
+
 
     data = request.get_json(silent=True) or {}
     try:
