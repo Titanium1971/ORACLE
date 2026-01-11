@@ -1,6 +1,24 @@
 console.log("🟣 Velvet build:", "API_ONLY_SCREEN_V1+RITUAL_COMPLETE_HTTP", new Date().toISOString());
 console.log("✅ app.js chargé — VelvetOracle");
 
+// ===========================
+// VO — TAP GUARD (anti double-tap)
+// Empêche les doubles actions accidentelles sans changer la logique métier.
+// ===========================
+const voTapGuard = (() => {
+  const last = new Map();
+  return {
+    allow: (key, cooldownMs = 450) => {
+      const now = Date.now();
+      const prev = last.get(key) || 0;
+      if (now - prev < cooldownMs) return false;
+      last.set(key, now);
+      return true;
+    }
+  };
+})();
+
+
 // =========================================================================
 // Velvet Typo Canon — Normalisation (Morena)
 // =========================================================================
@@ -272,19 +290,6 @@ if (tg && typeof tg.ready === "function") tg.ready();
 // ✅ Auto-expand gate: only keep forcing expand during the ritual screens
 let VO_AUTO_EXPAND_ENABLED = true;
 
-
-
-// ✅ Anti double-tap / double-click gate (UX safety)
-// Prevents accidental multi-activation on mobile.
-const VO_TAP_COOLDOWN_MS = 450;
-const __voTapGate = new Map();
-function voTapGuard(key, ms = VO_TAP_COOLDOWN_MS){
-  const now = Date.now();
-  const last = __voTapGate.get(key) || 0;
-  if (now - last < ms) return false;
-  __voTapGate.set(key, now);
-  return true;
-}
 
 // ✅ TELEGRAM viewport guard
 try {
@@ -750,11 +755,10 @@ console.assert(btnNext, "❌ btn-next introuvable");
 
 if (btnReadyEl) {
   btnReadyEl.addEventListener("click", () => {
+    if (!voTapGuard.allow("btn-ready", 700)) return;
     console.log("🟡 CLICK btn-ready — passage Intro → Chambre");
     primeTickAudio();
-    
-    if (!voTapGuard("btn-ready")) return;
-if (screenIntro) screenIntro.classList.add("hidden");
+    if (screenIntro) screenIntro.classList.add("hidden");
     if (screenChamber) screenChamber.classList.remove("hidden");
 
     try { injectFullscreenSeal(); } catch(e) {}
@@ -764,6 +768,7 @@ if (screenIntro) screenIntro.classList.add("hidden");
 
 if (btnStartRitualEl) {
   btnStartRitualEl.addEventListener("click", async () => {
+    if (!voTapGuard.allow("btn-start-ritual", 700)) return;
     window.Telegram?.WebApp?.expand();
     window.Telegram?.WebApp?.requestFullscreen?.();
     setTimeout(() => window.Telegram?.WebApp?.expand(), 250);
@@ -943,8 +948,7 @@ function renderQuestion(){
 optionButtons.forEach(btn => {
   btn.addEventListener("click", (e) => {
     primeTickAudio();
-    const __k = "opt-" + (btn.dataset.displayIndex || btn.dataset.realIndex || "x");
-    if (!voTapGuard(__k, 350)) return;
+    if (!voTapGuard.allow("quiz-option", 350)) return;
     if (showingExplanation) return;
     spawnRipple(btn, e);
 
@@ -1122,9 +1126,8 @@ function autoValidateOnTimeout(){
 if (btnNext) {
   btnNext.addEventListener("click", () => {
     primeTickAudio();
-    
-    if (!voTapGuard("btn-next")) return;
-if (!showingExplanation){
+    if (!voTapGuard.allow("btn-next", 450)) return;
+    if (!showingExplanation){
       if (!currentSelection) return;
       resolveCurrentQuestion(false);
       return;
@@ -1191,9 +1194,7 @@ function endRituel(){
 if (btnGoFeedback) {
   btnGoFeedback.addEventListener("click", () => {
     primeTickAudio();
-    
-    if (!voTapGuard("btn-go-feedback")) return;
-VO_AUTO_EXPAND_ENABLED = false;
+    VO_AUTO_EXPAND_ENABLED = false;
     if (screenResult) screenResult.classList.add("hidden");
     if (screenFeedbackFinal) screenFeedbackFinal.classList.remove("hidden");
   });
@@ -1209,9 +1210,7 @@ if (feedbackFinalSendBtn && feedbackFinalTextEl) {
 if (feedbackFinalSendBtn) {
   feedbackFinalSendBtn.addEventListener("click", async () => {
     primeTickAudio();
-    
-    if (!voTapGuard("feedback-send")) return;
-if (feedbackFinalSendBtn.disabled) return;
+    if (feedbackFinalSendBtn.disabled) return;
 
     const feedbackText = feedbackFinalTextEl.value.trim();
 
@@ -1287,9 +1286,7 @@ if (feedbackFinalSendBtn.disabled) return;
 if (feedbackFinalCloseBtn) {
   feedbackFinalCloseBtn.addEventListener("click", async () => {
     primeTickAudio();
-    
-    if (!voTapGuard("feedback-close")) return;
-if (!finalPayload) return;
+    if (!finalPayload) return;
 
     // ✅ fallback HTTP si jamais non parti
     if (!finalPayloadHttpSent) {
