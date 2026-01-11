@@ -1,6 +1,41 @@
 console.log("🟣 Velvet build:", "API_ONLY_SCREEN_V1+RITUAL_COMPLETE_HTTP", new Date().toISOString());
 console.log("✅ app.js chargé — VelvetOracle");
 
+// ===========================
+// VO — TAP GUARD (anti double-tap)
+// Empêche les doubles actions accidentelles sans changer la logique métier.
+// ===========================
+const voTapGuard = (() => {
+  const last = new Map();
+  return {
+    allow: (key, cooldownMs = 450) => {
+      const now = Date.now();
+      const prev = last.get(key) || 0;
+      if (now - prev < cooldownMs) return false;
+      last.set(key, now);
+      return true;
+    }
+  };
+})();
+
+// VO — ANTI-REFLEXE (micro-délai d’armement des options)
+let voOptionsArmedUntil = 0;
+const VO_OPTIONS_ARM_DELAY_MS = 220;
+
+// ===========================
+// VO — MICRO-PAUSE ENTRE QUESTIONS
+// Silence visuel contrôlé avant la question suivante
+// ===========================
+const VO_MICRO_PAUSE_MIN_MS = 300;
+const VO_MICRO_PAUSE_MAX_MS = 600;
+
+function voMicroPause() {
+  const delay = VO_MICRO_PAUSE_MIN_MS + Math.floor(Math.random() * (VO_MICRO_PAUSE_MAX_MS - VO_MICRO_PAUSE_MIN_MS + 1));
+  return new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+
+
 // =========================================================================
 // Velvet Typo Canon — Normalisation (Morena)
 // =========================================================================
@@ -304,6 +339,16 @@ function getTelegramUserId(){
   return "";
 }
 
+function getTelegramUsername(){
+  try{
+    const u = tg?.initDataUnsafe?.user?.username;
+    if (u && String(u).length > 0) return String(u);
+  }catch(e){}
+  return "";
+}
+return "";
+}
+
 /** attempt_id local fallback (si /ritual/start absent) */
 function generateLocalAttemptId(){
   const rand = Math.random().toString(16).slice(2, 8);
@@ -351,7 +396,9 @@ async function ensureAttemptStarted(){
   const url = `${QUESTIONS_API_URL}/ritual/start`;
   const body = {
     mode: "rituel_full_v1",
-    telegram_user_id: ritualPlayerTelegramUserId || undefined
+    telegram_user_id: ritualPlayerTelegramUserId || undefined,
+    telegram_username: getTelegramUsername() || undefined,
+    telegram_username: getTelegramUsername() || undefined
   };
 
   try {
@@ -653,7 +700,11 @@ function setRailProgress(remaining, total){
   if (!fill) return;
   const t = Math.max(1, total || 1);
   const r = Math.max(0, Math.min(remaining, t));
-  fill.style.transform = `scaleX(${r / t})`;
+  const frac = (r / t);
+  fill.style.transform = `scaleX(${frac})`;
+
+  // VO — Halo discret : p = 1 - fraction restante
+  voUpdateHaloFromProgress(1 - frac);
   // VO — Ring temporel : p = 1 - fraction restante
   try{
     const t2 = Math.max(1, total || 1);
@@ -663,7 +714,6 @@ function setRailProgress(remaining, total){
   }catch(e){}
 
 }
-
 
 // ===========================
 // VO — RING TEMPOREL (toujours visible, sauf Signature)
@@ -682,7 +732,7 @@ function voEnsureTimerRing(){
   return ring;
 }
 
-function voUpdateTimerRing(p){ // p: 0..1 (0 début, 1 fin)
+function voUpdateTimerRing(p){
   const ring = voEnsureTimerRing();
   if (!ring) return;
   const clamped = Math.max(0, Math.min(1, p));
@@ -749,6 +799,28 @@ const quizMetaEl = document.getElementById("quiz-meta");
 const quizTimerEl = document.getElementById("quiz-timer");
 const quizExplanationEl = document.getElementById("quiz-explanation");
 const optionButtons = document.querySelectorAll(".quiz-option");
+
+// ===========================
+// VO — APPARITION PROGRESSIVE DES RÉPONSES (SOFT)
+// Opacité progressive, sans déplacement
+// ===========================
+const VO_OPTION_STAGGER_MS = 140;
+const VO_OPTION_FADE_MS = 180;
+
+function voSoftStaggerOptions(){
+  try{
+    const opts = Array.from(optionButtons || []);
+    // Reset
+    opts.forEach((el) => {
+      el.style.opacity = "0";
+      el.style.transition = `opacity ${VO_OPTION_FADE_MS}ms ease-out`;
+    });
+    // Stagger in
+    opts.forEach((el, i) => {
+      setTimeout(() => { el.style.opacity = "1"; }, i * VO_OPTION_STAGGER_MS);
+    });
+  }catch(e){}
+}
 const btnNext = document.getElementById("btn-next");
 const quizCorrectCountEl = document.getElementById("quiz-correct-count");
 const quizCurrentIndexEl = document.getElementById("quiz-current-index");
@@ -779,6 +851,7 @@ console.assert(btnNext, "❌ btn-next introuvable");
 
 if (btnReadyEl) {
   btnReadyEl.addEventListener("click", () => {
+    if (!voTapGuard.allow("btn-ready", 700)) return;
     console.log("🟡 CLICK btn-ready — passage Intro → Chambre");
     primeTickAudio();
     if (screenIntro) screenIntro.classList.add("hidden");
@@ -791,6 +864,7 @@ if (btnReadyEl) {
 
 if (btnStartRitualEl) {
   btnStartRitualEl.addEventListener("click", async () => {
+    if (!voTapGuard.allow("btn-start-ritual", 700)) return;
     window.Telegram?.WebApp?.expand();
     window.Telegram?.WebApp?.requestFullscreen?.();
     setTimeout(() => window.Telegram?.WebApp?.expand(), 250);
@@ -926,6 +1000,9 @@ function startRituel(){
 function renderQuestion(){
   const q = QUIZ_DATA[currentIndex];
 
+  // Armement anti-réflexe : options cliquables seulement après un bref délai
+  voOptionsArmedUntil = Date.now() + VO_OPTIONS_ARM_DELAY_MS;
+
   if (quizQuestionEl) quizQuestionEl.textContent = velvetNormalize(q.question);
   try{ voEnsureTimerRing(); }catch(e){}
   if (quizMetaEl) quizMetaEl.textContent = `Domaine : ${q.domain}`;
@@ -964,6 +1041,8 @@ function renderQuestion(){
     btnNext.disabled = true;
     btnNext.textContent = (currentIndex === TOTAL_QUESTIONS - 1) ? "Terminer le rituel" : "Valider la réponse";
   }
+  // VO — apparition progressive des options (soft)
+  requestAnimationFrame(() => voSoftStaggerOptions());
 
   updateCorrectCounter();
   startQuestionTimer();
@@ -972,6 +1051,8 @@ function renderQuestion(){
 optionButtons.forEach(btn => {
   btn.addEventListener("click", (e) => {
     primeTickAudio();
+    if (!voTapGuard.allow("quiz-option", 350)) return;
+    if (Date.now() < voOptionsArmedUntil) return;
     if (showingExplanation) return;
     spawnRipple(btn, e);
 
@@ -1022,7 +1103,7 @@ function resolveCurrentQuestion(forceTimeout=false){
   if (!currentSelection || forceTimeout){
     choiceIndex = -1;
     choiceLetter = "-";
-    userText = "Aucune réponse";
+    userText = "Aucune réponse (temps écoulé)";
     isTimeout = true;
   } else {
     choiceIndex = currentSelection.actualIndex;
@@ -1045,7 +1126,7 @@ function resolveCurrentQuestion(forceTimeout=false){
   let resultLabel = "";
   let resultClass = "";
   if (isTimeout){
-    resultLabel = "Réponse enregistrée";
+    resultLabel = "Réponse enregistrée (temps écoulé)";
     resultClass = "timeout";
   }
   else if (isCorrect){
@@ -1149,6 +1230,7 @@ function autoValidateOnTimeout(){
 if (btnNext) {
   btnNext.addEventListener("click", () => {
     primeTickAudio();
+    if (!voTapGuard.allow("btn-next", 450)) return;
     if (!showingExplanation){
       if (!currentSelection) return;
       resolveCurrentQuestion(false);
@@ -1256,7 +1338,9 @@ if (feedbackFinalSendBtn) {
     finalPayload.telegram_user_id = ritualPlayerTelegramUserId || getTelegramUserId() || null;
 
 
-    // ✅ 1) HTTP complete (Network visible)
+    
+    finalPayload.telegram_username = getTelegramUsername() || null;
+// ✅ 1) HTTP complete (Network visible)
     if (!finalPayloadHttpSent) {
       try {
         await ensureAttemptStarted();
@@ -1347,3 +1431,46 @@ if (feedbackFinalCloseBtn) {
 }
 
 console.log("✅ Listeners OK — boutons connectés");
+
+// ===========================
+// VO — SCROLL LOCK (SAFE FIX)
+// ===========================
+document.addEventListener(
+  "touchmove",
+  (e) => {
+    if (!document.body.classList.contains("vo-lock-scroll")) return;
+    const card = e.target.closest?.(".card");
+    if (card) return;
+    e.preventDefault();
+  },
+  { passive: false }
+);
+
+
+// ===========================
+// VO — OPTION C : HALO TEMPOREL DISCRET
+// Calé sur la progression de la barre (time-fill), sans chiffres.
+// ===========================
+function voEnsureQuestionHalo(){
+  const host = document.getElementById("quiz-question");
+  if (!host) return null;
+  let halo = host.querySelector(".question-halo");
+  if (!halo){
+    halo = document.createElement("div");
+    halo.className = "question-halo";
+    host.appendChild(halo);
+  }
+  return halo;
+}
+
+function voUpdateHaloFromProgress(p){ // p: 0..1 (0 début, 1 fin)
+  const halo = voEnsureQuestionHalo();
+  if (!halo) return;
+  const clamped = Math.max(0, Math.min(1, p));
+  // Intensité très douce : quasi invisible au début, un peu plus présente en fin.
+  const intensity = Math.pow(clamped, 1.6); // courbe Velvet (lente au début)
+  const spread = 14 + Math.round(20 * intensity);
+  const alpha  = 0.06 + 0.14 * intensity;
+  halo.classList.add("active");
+  halo.style.boxShadow = `0 0 ${spread}px rgba(255, 215, 160, ${alpha})`;
+}
