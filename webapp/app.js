@@ -273,6 +273,19 @@ if (tg && typeof tg.ready === "function") tg.ready();
 let VO_AUTO_EXPAND_ENABLED = true;
 
 
+
+// ✅ Anti double-tap / double-click gate (UX safety)
+// Prevents accidental multi-activation on mobile.
+const VO_TAP_COOLDOWN_MS = 450;
+const __voTapGate = new Map();
+function voTapGuard(key, ms = VO_TAP_COOLDOWN_MS){
+  const now = Date.now();
+  const last = __voTapGate.get(key) || 0;
+  if (now - last < ms) return false;
+  __voTapGate.set(key, now);
+  return true;
+}
+
 // ✅ TELEGRAM viewport guard
 try {
   const __tg = window.Telegram?.WebApp;
@@ -739,7 +752,9 @@ if (btnReadyEl) {
   btnReadyEl.addEventListener("click", () => {
     console.log("🟡 CLICK btn-ready — passage Intro → Chambre");
     primeTickAudio();
-    if (screenIntro) screenIntro.classList.add("hidden");
+    
+    if (!voTapGuard("btn-ready")) return;
+if (screenIntro) screenIntro.classList.add("hidden");
     if (screenChamber) screenChamber.classList.remove("hidden");
 
     try { injectFullscreenSeal(); } catch(e) {}
@@ -928,6 +943,8 @@ function renderQuestion(){
 optionButtons.forEach(btn => {
   btn.addEventListener("click", (e) => {
     primeTickAudio();
+    const __k = "opt-" + (btn.dataset.displayIndex || btn.dataset.realIndex || "x");
+    if (!voTapGuard(__k, 350)) return;
     if (showingExplanation) return;
     spawnRipple(btn, e);
 
@@ -1105,7 +1122,9 @@ function autoValidateOnTimeout(){
 if (btnNext) {
   btnNext.addEventListener("click", () => {
     primeTickAudio();
-    if (!showingExplanation){
+    
+    if (!voTapGuard("btn-next")) return;
+if (!showingExplanation){
       if (!currentSelection) return;
       resolveCurrentQuestion(false);
       return;
@@ -1172,7 +1191,9 @@ function endRituel(){
 if (btnGoFeedback) {
   btnGoFeedback.addEventListener("click", () => {
     primeTickAudio();
-    VO_AUTO_EXPAND_ENABLED = false;
+    
+    if (!voTapGuard("btn-go-feedback")) return;
+VO_AUTO_EXPAND_ENABLED = false;
     if (screenResult) screenResult.classList.add("hidden");
     if (screenFeedbackFinal) screenFeedbackFinal.classList.remove("hidden");
   });
@@ -1188,7 +1209,9 @@ if (feedbackFinalSendBtn && feedbackFinalTextEl) {
 if (feedbackFinalSendBtn) {
   feedbackFinalSendBtn.addEventListener("click", async () => {
     primeTickAudio();
-    if (feedbackFinalSendBtn.disabled) return;
+    
+    if (!voTapGuard("feedback-send")) return;
+if (feedbackFinalSendBtn.disabled) return;
 
     const feedbackText = feedbackFinalTextEl.value.trim();
 
@@ -1264,7 +1287,9 @@ if (feedbackFinalSendBtn) {
 if (feedbackFinalCloseBtn) {
   feedbackFinalCloseBtn.addEventListener("click", async () => {
     primeTickAudio();
-    if (!finalPayload) return;
+    
+    if (!voTapGuard("feedback-close")) return;
+if (!finalPayload) return;
 
     // ✅ fallback HTTP si jamais non parti
     if (!finalPayloadHttpSent) {
