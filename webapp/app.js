@@ -654,7 +654,49 @@ function setRailProgress(remaining, total){
   const t = Math.max(1, total || 1);
   const r = Math.max(0, Math.min(remaining, t));
   fill.style.transform = `scaleX(${r / t})`;
+  // VO — Ring temporel : p = 1 - fraction restante
+  try{
+    const t2 = Math.max(1, total || 1);
+    const r2 = Math.max(0, Math.min(remaining, t2));
+    const fracRemaining = (r2 / t2);
+    voUpdateTimerRing(1 - fracRemaining);
+  }catch(e){}
+
 }
+
+
+// ===========================
+// VO — RING TEMPOREL (toujours visible, sauf Signature)
+// Sync sur le timer interne via setRailProgress()
+// ===========================
+function voEnsureTimerRing(){
+  const host = document.getElementById("quiz-question");
+  if (!host) return null;
+  if (!host.style.position) host.style.position = "relative";
+  let ring = host.querySelector(".vo-timer-ring");
+  if (!ring){
+    ring = document.createElement("div");
+    ring.className = "vo-timer-ring";
+    host.appendChild(ring);
+  }
+  return ring;
+}
+
+function voUpdateTimerRing(p){ // p: 0..1 (0 début, 1 fin)
+  const ring = voEnsureTimerRing();
+  if (!ring) return;
+  const clamped = Math.max(0, Math.min(1, p));
+  ring.classList.add("active");
+  ring.style.setProperty("--p", String(clamped));
+}
+
+function voResetTimerRing(){
+  const ring = voEnsureTimerRing();
+  if (!ring) return;
+  ring.classList.remove("active");
+  ring.style.setProperty("--p", "0");
+}
+
 
 function spawnRipple(btn, event){
   if (!btn) return;
@@ -829,6 +871,7 @@ function clearExplanationCountdown(){
 }
 
 function startQuestionTimer(){
+  try{ voResetTimerRing(); }catch(e){}
   clearQuestionTimer();
   clearExplanationCountdown();
 
@@ -884,6 +927,7 @@ function renderQuestion(){
   const q = QUIZ_DATA[currentIndex];
 
   if (quizQuestionEl) quizQuestionEl.textContent = velvetNormalize(q.question);
+  try{ voEnsureTimerRing(); }catch(e){}
   if (quizMetaEl) quizMetaEl.textContent = `Domaine : ${q.domain}`;
   if (quizIndexEl) quizIndexEl.textContent = String(currentIndex + 1);
   if (quizTotalEl) quizTotalEl.textContent = String(TOTAL_QUESTIONS);
