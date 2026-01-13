@@ -563,8 +563,8 @@ async def handle_webapp_data(update: Update,
 
     # 1) RITUEL (création page)
     if payload_mode in ("rituel_full_v1", "rituel_v1"):
-        score = _first_int(payload, ["score"]) or 0
-        total = _first_int(payload, ["total"]) or 15
+        score = _first_int(payload, ["score", "score_raw"]) or 0
+        total = _first_int(payload, ["total", "score_max", "total_questions"]) or 15
 
         total_time_s = _first_int(
             payload,
