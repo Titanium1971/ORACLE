@@ -34,6 +34,8 @@ function voMicroPause() {
   return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
+
+
 // =========================================================================
 // Velvet Typo Canon — Normalisation (Morena)
 // =========================================================================
@@ -47,18 +49,21 @@ function velvetNormalize(input) {
     .replace(/æ/g, "ae")
     .replace(/Æ/g, "AE");
 
-  // 1bis) Old Norse letters not supported by Morena
-  // ð (eth) → d / D
-  // þ (thorn) → th / Th
-  s = s
-    .replace(/ð/g, "d")
-    .replace(/Ð/g, "D")
-    .replace(/þ/g, "th")
-    .replace(/Þ/g, "Th");
-
-  // 2) Strip diacritics / special combining marks (Morena coverage is limited)
-  //    Examples fixed: ø → o, ǫ → o, ñ → n, é → e, etc.
-  s = s.normalize("NFD").replace(/[̀-ͯ]/g, "");
+  // 2) Strip diacritics / special combining marks ONLY in Velvet mode (Morena coverage is limited)
+  //    In Standard mode, accents must be preserved.
+  try {
+    const mode = (typeof getSavedFontMode === "function") ? getSavedFontMode() : "velvet";
+    if (mode === "velvet") {
+      // Examples fixed: ø → o, ǫ → o, ñ → n, é → e, etc.
+      s = s.normalize("NFD").replace(/[̀-ͯ]/g, "");
+    } else {
+      // Keep accents; still canonicalize combining sequences to a stable form.
+      s = s.normalize("NFC");
+    }
+  } catch (_) {
+    // Safe default: keep accents if anything goes wrong.
+    try { s = s.normalize("NFC"); } catch(__) {}
+  }
 
   // 3) Small curated substitutions (kept for readability)
   s = s
