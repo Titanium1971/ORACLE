@@ -64,94 +64,6 @@ function velvetNormalize(input) {
 // =========================================================================
 // Velvet Font Choice — Velvet / Standard (persistant)
 // =========================================================================
-
-const THEME_STORAGE_KEY = "VO_THEME_MODE_V1";
-const DEFAULT_THEME = "velvet"; // Couleur canon (or)
-const DEFAULT_FONT = "standard"; // Base du jeu : police standard
-
-function getSavedTheme() {
-  try {
-    const t = localStorage.getItem(THEME_STORAGE_KEY);
-    return (t === "velvet" || t === "sepia" || t === "slate") ? t : null;
-  } catch(_) { return null; }
-}
-
-function applyTheme(themeId, persist = false) {
-  const t = (themeId === "sepia" || themeId === "slate" || themeId === "velvet") ? themeId : DEFAULT_THEME;
-  document.documentElement.setAttribute("data-vo-theme", t);
-
-  // Police indépendante du thème (choix utilisateur)
-
-  if (persist) {
-    try { localStorage.setItem(THEME_STORAGE_KEY, t); } catch(_) {}
-  }
-}
-
-function initThemeOnLoad() {
-  const saved = getSavedTheme();
-  applyTheme(saved || DEFAULT_THEME, false);
-}
-
-function openThemeModal(opts = {}) {
-  const modal = document.getElementById("vo-theme-modal");
-  const confirm = document.getElementById("btn-theme-confirm");
-  const cancel = document.getElementById("btn-theme-cancel");
-  if (!modal || !confirm || !cancel) {
-    return Promise.resolve(getSavedTheme() || DEFAULT_THEME);
-  }
-
-  const force = !!opts.force;
-  const allowCancel = !!opts.allowCancel;
-
-  let chosen = getSavedTheme() || DEFAULT_THEME;
-
-  // UI state
-  const items = Array.from(modal.querySelectorAll(".vo-theme-item"));
-  function syncSelected() {
-    for (const el of items) {
-      const is = (el.getAttribute("data-theme") === chosen);
-      el.setAttribute("aria-selected", is ? "true" : "false");
-    }
-  }
-
-  syncSelected();
-
-  // Cancel visibility
-  cancel.style.display = allowCancel ? "" : "none";
-
-  modal.classList.remove("hidden");
-
-  return new Promise((resolve) => {
-    function cleanup(result) {
-      modal.classList.add("hidden");
-      items.forEach(it => it.removeEventListener("click", onPick));
-      confirm.removeEventListener("click", onConfirm);
-      cancel.removeEventListener("click", onCancel);
-      resolve(result);
-    }
-
-    function onPick(e) {
-      const id = e.currentTarget.getAttribute("data-theme");
-      if (id) chosen = id;
-      syncSelected();
-    }
-
-    function onConfirm() {
-      applyTheme(chosen, true);
-      cleanup(chosen);
-    }
-
-    function onCancel() {
-      if (!allowCancel && force) return;
-      cleanup(null);
-    }
-
-    items.forEach(it => it.addEventListener("click", onPick));
-    confirm.addEventListener("click", onConfirm);
-    cancel.addEventListener("click", onCancel);
-  });
-}
-
 const FONT_STORAGE_KEY = "vo_font_mode"; // "velvet" | "standard"
 
 function applyFontMode(mode) {
@@ -195,9 +107,9 @@ function applyFontMode(mode) {
 function getSavedFontMode() {
   try {
     const v = localStorage.getItem(FONT_STORAGE_KEY);
-    return (v === "standard" || v === "velvet") ? v : DEFAULT_FONT;
+    return (v === "standard" || v === "velvet") ? v : "velvet";
   } catch (_) {
-    return DEFAULT_FONT;
+    return "velvet";
   }
 }
 
@@ -358,7 +270,6 @@ window.addEventListener("unhandledrejection", (e) => {
 console.log("✅ DOM ready — init()");
 
 document.addEventListener("DOMContentLoaded", () => {
-  try { initThemeOnLoad(); } catch(e) {}
   try { injectFullscreenSeal(); } catch(e) {}
 });
 
@@ -449,29 +360,27 @@ function buildApiHeaders(){
 // =========================================================================
 // ✅ UX latence — Overlay de préparation (rituel)
 // =========================================================================
-function showRitualLoading(message){
+function setRitualLoadingText(text){
+  const t = document.getElementById("ritual-loading-text") || document.querySelector("#ritual-loading .ritual-text");
+  if (t && typeof text === "string") t.textContent = text;
+}
+
+function showRitualLoading(text){
+  try { if (text) setRitualLoadingText(text); } catch(e) {}
   const el = document.getElementById("ritual-loading");
-  if (!el) return;
-
-  // Texte dynamique (fallback sur le texte initial du HTML)
-  try {
-    const t = document.getElementById("ritual-loading-text");
-    if (t && typeof message === "string" && message.trim().length > 0) {
-      t.textContent = message.trim();
-    }
-  } catch(e) {}
-
-  el.classList.remove("hidden");
-  el.classList.remove("settling"); // ✅ important : laisse l’animation tourner
+  if (el){
+    el.classList.remove("hidden");
+    el.classList.remove("settling"); // ✅ important : laisse l’animation tourner
+  }
 }
 
 function hideRitualLoading(){
   const el = document.getElementById("ritual-loading");
-  if (!el) return;
-  el.classList.remove("settling");
-  el.classList.add("hidden");
+  if (el){
+    el.classList.remove("settling");
+    el.classList.add("hidden");
+  }
 }
-
 
 
 /** tente de créer un attempt côté backend (visible dans Network) */
@@ -878,8 +787,6 @@ const screenFeedbackFinal = document.querySelector(".screen-feedback-final");
 const btnReadyEl = document.getElementById("btn-ready");
 const btnStartRitualEl = document.getElementById("btn-start-ritual");
 
-const btnThemeOpenEl = document.getElementById("btn-theme-open");
-
 const quizIndexEl = document.getElementById("quiz-index");
 const quizTotalEl = document.getElementById("quiz-total");
 const quizQuestionEl = document.getElementById("quiz-question");
@@ -946,31 +853,14 @@ if (btnReadyEl) {
     if (screenChamber) screenChamber.classList.remove("hidden");
 
     try { injectFullscreenSeal(); } catch(e) {}
-    // Typographie — choix discret en Chambre (persisté localement)
     try { injectFontChooser(); } catch(e) {}
   });
 }
 
-
-if (btnThemeOpenEl) {
-  btnThemeOpenEl.addEventListener("click", async () => {
-    if (!voTapGuard.allow("btn-theme-open", 500)) return;
-    await openThemeModal({ allowCancel: true, force: false });
-  });
-}
 if (btnStartRitualEl) {
   btnStartRitualEl.addEventListener("click", async () => {
     if (!voTapGuard.allow("btn-start-ritual", 700)) return;
-    
-    // 🎛️ Thème (confort visuel) — seulement au lancement du rituel
-    try {
-      const has = getSavedTheme();
-      if (!has) {
-        const picked = await openThemeModal({ allowCancel: false, force: true });
-        if (!picked) return;
-      }
-    } catch(e) {}
-window.Telegram?.WebApp?.expand();
+    window.Telegram?.WebApp?.expand();
     window.Telegram?.WebApp?.requestFullscreen?.();
     setTimeout(() => window.Telegram?.WebApp?.expand(), 250);
     console.log("🟡 CLICK btn-start-ritual — démarrage rituel");
@@ -989,7 +879,7 @@ window.Telegram?.WebApp?.expand();
     });
 
     // ✅ UX latence : couvre /ritual/start + /questions/random
-    showRitualLoading("Préparation du rituel");
+    showRitualLoading();
 
     try {
       // 1) attempt_id (peut être lent)
@@ -1379,32 +1269,35 @@ function endRituel(){
 
   ritualFinished = true;
 
+  let verdictTitle, verdictSubtitle;
+  if (finalScore >= 12){
+    verdictTitle = "Parcours observé";
+    verdictSubtitle = "Ce rituel apporte des éléments d’observation sur ton parcours.";
+  } else {
+    verdictTitle = "Parcours enregistré";
+    verdictSubtitle = "Chaque rituel constitue un instant dans le temps.";
+  }
+
+  if (resultTitleEl) resultTitleEl.textContent = verdictTitle;
+  if (resultSubtitleEl) resultSubtitleEl.textContent = verdictSubtitle;
+  if (resultScoreEl) resultScoreEl.textContent = `${finalScore} / ${TOTAL_QUESTIONS}`;
+  if (resultTimeEl) resultTimeEl.textContent = formatSeconds(finalTotalSeconds);
+
   // ✅ Stop forcing expand outside the ritual screen (mobile usability)
   VO_AUTO_EXPAND_ENABLED = false;
 
-  // 1) Quitter l'écran Quiz
   if (screenQuiz) screenQuiz.classList.add("hidden");
-  if (screenResult) screenResult.classList.add("hidden"); // au cas où (legacy)
-
-  // 2) Overlay discret d’enregistrement (ring + halo)
-  showRitualLoading("Enregistrement de votre rituel");
-
-  // 3) Préparer l’écran final (réinitialise l’état UI au cas où)
-  try {
-    if (feedbackFinalTextEl) feedbackFinalTextEl.value = "";
-    if (feedbackFinalSendBtn) { feedbackFinalSendBtn.disabled = true; feedbackFinalSendBtn.classList.remove("hidden"); }
-    if (feedbackFinalMessageEl) { feedbackFinalMessageEl.classList.add("hidden"); feedbackFinalMessageEl.innerHTML = ""; }
-    if (feedbackFinalSignatureEl) feedbackFinalSignatureEl.classList.add("hidden");
-    if (feedbackFinalCloseBtn) { feedbackFinalCloseBtn.disabled = true; feedbackFinalCloseBtn.classList.add("hidden"); }
-  } catch(e) {}
-
-  // 4) Transition courte vers l’écran final
-  setTimeout(() => {
-    hideRitualLoading();
-    if (screenFeedbackFinal) screenFeedbackFinal.classList.remove("hidden");
-  }, 900);
+  if (screenResult) screenResult.classList.remove("hidden");
 }
 
+if (btnGoFeedback) {
+  btnGoFeedback.addEventListener("click", () => {
+    primeTickAudio();
+    VO_AUTO_EXPAND_ENABLED = false;
+    if (screenResult) screenResult.classList.add("hidden");
+    if (screenFeedbackFinal) screenFeedbackFinal.classList.remove("hidden");
+  });
+}
 
 if (feedbackFinalSendBtn && feedbackFinalTextEl) {
   feedbackFinalSendBtn.disabled = true;
@@ -1440,6 +1333,9 @@ if (feedbackFinalSendBtn) {
     finalPayload.telegram_user_id = ritualPlayerTelegramUserId || getTelegramUserId() || null;
 
 
+    // ✅ UX — Enregistrement (halo + ring)
+    showRitualLoading("Enregistrement de votre rituel");
+
     // ✅ 1) HTTP complete (Network visible)
     if (!finalPayloadHttpSent) {
       try {
@@ -1468,6 +1364,8 @@ if (feedbackFinalSendBtn) {
       console.error("❌ sendData() a échoué (feedback) :", e);
       console.error("❌ Error details:", e.message, e.stack);
     }
+
+    hideRitualLoading();
 
     feedbackFinalSendBtn.disabled = true;
     if (feedbackFinalTextEl) feedbackFinalTextEl.readOnly = true;
@@ -1572,6 +1470,5 @@ function voUpdateHaloFromProgress(p){ // p: 0..1 (0 début, 1 fin)
   const spread = 14 + Math.round(20 * intensity);
   const alpha  = 0.06 + 0.14 * intensity;
   halo.classList.add("active");
-  const rgb = (getComputedStyle(document.documentElement).getPropertyValue("--vo-halo-rgb") || "200,169,106").trim();
-  halo.style.boxShadow = `0 0 ${spread}px rgba(${rgb}, ${alpha})`;
+  halo.style.boxShadow = `0 0 ${spread}px rgba(255, 215, 160, ${alpha})`;
 }
