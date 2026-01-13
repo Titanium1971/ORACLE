@@ -313,8 +313,21 @@ def write_to_notion(payload):
 
     try:
         # Extract data from payload
-        score = payload.get("score") or 0
-        total = payload.get("total") or 15
+        # Score: prefer explicit score_raw/score_max from backend payloads, fallback to legacy keys.
+        score = payload.get("score_raw")
+        if score is None:
+            score = payload.get("score")
+        if score is None:
+            score = payload.get("final_score")
+        if score is None:
+            score = 0
+
+        total = payload.get("score_max")
+        if total is None:
+            total = payload.get("total")
+        if total is None:
+            total = 15
+
         time_seconds = payload.get("time_total_seconds") or payload.get(
             "time_spent_seconds") or 0
         time_formatted = payload.get("time_formatted") or format_time_mmss(
