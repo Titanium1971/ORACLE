@@ -449,21 +449,29 @@ function buildApiHeaders(){
 // =========================================================================
 // ✅ UX latence — Overlay de préparation (rituel)
 // =========================================================================
-function showRitualLoading(){
+function showRitualLoading(message){
   const el = document.getElementById("ritual-loading");
-  if (el){
-    el.classList.remove("hidden");
-    el.classList.remove("settling"); // ✅ important : laisse l’animation tourner
-  }
+  if (!el) return;
+
+  // Texte dynamique (fallback sur le texte initial du HTML)
+  try {
+    const t = document.getElementById("ritual-loading-text");
+    if (t && typeof message === "string" && message.trim().length > 0) {
+      t.textContent = message.trim();
+    }
+  } catch(e) {}
+
+  el.classList.remove("hidden");
+  el.classList.remove("settling"); // ✅ important : laisse l’animation tourner
 }
 
 function hideRitualLoading(){
   const el = document.getElementById("ritual-loading");
-  if (el){
-    el.classList.remove("settling");
-    el.classList.add("hidden");
-  }
+  if (!el) return;
+  el.classList.remove("settling");
+  el.classList.add("hidden");
 }
+
 
 
 /** tente de créer un attempt côté backend (visible dans Network) */
@@ -981,7 +989,7 @@ window.Telegram?.WebApp?.expand();
     });
 
     // ✅ UX latence : couvre /ritual/start + /questions/random
-    showRitualLoading();
+    showRitualLoading("Préparation du rituel");
 
     try {
       // 1) attempt_id (peut être lent)
@@ -1371,35 +1379,32 @@ function endRituel(){
 
   ritualFinished = true;
 
-  let verdictTitle, verdictSubtitle;
-  if (finalScore >= 12){
-    verdictTitle = "Parcours observé";
-    verdictSubtitle = "Ce rituel apporte des éléments d’observation sur ton parcours.";
-  } else {
-    verdictTitle = "Parcours enregistré";
-    verdictSubtitle = "Chaque rituel constitue un instant dans le temps.";
-  }
-
-  if (resultTitleEl) resultTitleEl.textContent = verdictTitle;
-  if (resultSubtitleEl) resultSubtitleEl.textContent = verdictSubtitle;
-  if (resultScoreEl) resultScoreEl.textContent = `${finalScore} / ${TOTAL_QUESTIONS}`;
-  if (resultTimeEl) resultTimeEl.textContent = formatSeconds(finalTotalSeconds);
-
   // ✅ Stop forcing expand outside the ritual screen (mobile usability)
   VO_AUTO_EXPAND_ENABLED = false;
 
+  // 1) Quitter l'écran Quiz
   if (screenQuiz) screenQuiz.classList.add("hidden");
-  if (screenResult) screenResult.classList.remove("hidden");
+  if (screenResult) screenResult.classList.add("hidden"); // au cas où (legacy)
+
+  // 2) Overlay discret d’enregistrement (ring + halo)
+  showRitualLoading("Enregistrement de votre rituel");
+
+  // 3) Préparer l’écran final (réinitialise l’état UI au cas où)
+  try {
+    if (feedbackFinalTextEl) feedbackFinalTextEl.value = "";
+    if (feedbackFinalSendBtn) { feedbackFinalSendBtn.disabled = true; feedbackFinalSendBtn.classList.remove("hidden"); }
+    if (feedbackFinalMessageEl) { feedbackFinalMessageEl.classList.add("hidden"); feedbackFinalMessageEl.innerHTML = ""; }
+    if (feedbackFinalSignatureEl) feedbackFinalSignatureEl.classList.add("hidden");
+    if (feedbackFinalCloseBtn) { feedbackFinalCloseBtn.disabled = true; feedbackFinalCloseBtn.classList.add("hidden"); }
+  } catch(e) {}
+
+  // 4) Transition courte vers l’écran final
+  setTimeout(() => {
+    hideRitualLoading();
+    if (screenFeedbackFinal) screenFeedbackFinal.classList.remove("hidden");
+  }, 900);
 }
 
-if (btnGoFeedback) {
-  btnGoFeedback.addEventListener("click", () => {
-    primeTickAudio();
-    VO_AUTO_EXPAND_ENABLED = false;
-    if (screenResult) screenResult.classList.add("hidden");
-    if (screenFeedbackFinal) screenFeedbackFinal.classList.remove("hidden");
-  });
-}
 
 if (feedbackFinalSendBtn && feedbackFinalTextEl) {
   feedbackFinalSendBtn.disabled = true;

@@ -67,12 +67,7 @@
         <!-- ✅ Choix de police : géré par app.js (injectFontChooser) -->
         <!-- (Le bloc HTML "Typographie" a été retiré pour éviter tout doublon.) -->
 
-        
-        <div class="vo-theme-entry">
-          <div class="vo-theme-title">Confort visuel</div>
-          <button class="vo-theme-open" id="btn-theme-open" type="button">Choisir un thème</button>
-        </div>
-<button class="chamber-cta" id="btn-start-ritual">● Commencer le rituel</button>
+        <button class="chamber-cta" id="btn-start-ritual">● Commencer le rituel</button>
       </div>
     </div>
 
@@ -140,40 +135,6 @@
       </div>
     </div>
 
-    <!-- ÉCRAN 4 -->
-    <div class="screen-result hidden">
-      <div class="result-card">
-        <div class="logo">
-          <img src="velvet-logo.svg" alt="Velvet Oracle — Résultats">
-        </div>
-
-        <div class="result-heading">Velvet Oracle — Rituel</div>
-        <div class="result-title" id="result-title">Verdict du rituel</div>
-        <div class="result-line"></div>
-
-        <div class="result-score">
-          Score · <span id="result-score">0 / 15</span>
-        </div>
-        <div class="result-meta">
-          Temps total · <span id="result-time">00:00</span>
-        </div>
-
-        <div class="result-subtitle" id="result-subtitle">
-          Ce rituel est une photographie de ce soir.
-          <span>La suite se joue dans la durée.</span>
-        </div>
-
-        <div class="result-note">
-          Ce passage ne te définit pas.
-          Il indique simplement jusqu’où ta culture tient sous pression, ici et maintenant.
-        </div>
-
-        <button class="result-cta" id="btn-go-feedback">
-          Confier ton ressenti & valider ta participation
-        </button>
-      </div>
-    </div>
-
     <!-- ÉCRAN 5 -->
     <div class="screen-feedback-final hidden">
       <div class="feedback-final-card">
@@ -210,7 +171,7 @@
     <div id="ritual-loading" class="ritual-loading hidden" aria-hidden="true">
       <div class="ritual-loader">
         <div class="ritual-ring" aria-hidden="true"></div>
-        <div class="ritual-text">Préparation du rituel</div>
+        <div id="ritual-loading-text" class="ritual-text">Préparation du rituel</div>
       </div>
     </div>
 
@@ -231,40 +192,5 @@
 
   <!-- Ton script applicatif -->
   <script src="app.js?v=1"></script>
-
-  <!-- THÈMES VISUELS (Confort) -->
-  <div class="vo-theme-modal hidden" id="vo-theme-modal" role="dialog" aria-modal="true" aria-labelledby="vo-theme-h">
-    <div class="vo-theme-card">
-      <div class="vo-theme-head">
-        <div class="vo-theme-kicker">Velvet Oracle</div>
-        <div class="vo-theme-h" id="vo-theme-h">Choisissez le confort visuel du rituel</div>
-        <div class="vo-theme-sub">Ce choix n’altère rien. Il éclaire seulement la lecture.</div>
-      </div>
-
-      <div class="vo-theme-grid" role="list">
-        <button class="vo-theme-item" data-theme="velvet" role="listitem" type="button">
-          <div class="vo-theme-swatch sw-velvet" aria-hidden="true"></div>
-          <div class="vo-theme-name">Noir profond</div>
-          <div class="vo-theme-desc">Canon Velvet</div>
-        </button>
-
-        <button class="vo-theme-item" data-theme="sepia" role="listitem" type="button">
-          <div class="vo-theme-swatch sw-sepia" aria-hidden="true"></div>
-          <div class="vo-theme-name">Sépia doux</div>
-          <div class="vo-theme-desc">Confort visuel</div>
-        </button>
-
-        <button class="vo-theme-item" data-theme="slate" role="listitem" type="button">
-          <div class="vo-theme-swatch sw-slate" aria-hidden="true"></div>
-          <div class="vo-theme-name">Ardoise froide</div>
-          <div class="vo-theme-desc">Clarté</div>
-        </button>
-      </div>
-
-      <div class="vo-theme-actions">
-        <button class="vo-theme-cancel" id="btn-theme-cancel" type="button">Revenir</button>
-        <button class="vo-theme-confirm" id="btn-theme-confirm" type="button">Continuer</button>
-      </div>
-    </div>
-  </div>
+</body>
 </html>
