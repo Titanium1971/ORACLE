@@ -34,8 +34,6 @@ function voMicroPause() {
   return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
-
-
 // =========================================================================
 // Velvet Typo Canon — Normalisation (Morena)
 // =========================================================================
@@ -48,6 +46,15 @@ function velvetNormalize(input) {
     .replace(/Œ/g, "OE")
     .replace(/æ/g, "ae")
     .replace(/Æ/g, "AE");
+
+  // 1bis) Old Norse letters not supported by Morena
+  // ð (eth) → d / D
+  // þ (thorn) → th / Th
+  s = s
+    .replace(/ð/g, "d")
+    .replace(/Ð/g, "D")
+    .replace(/þ/g, "th")
+    .replace(/Þ/g, "Th");
 
   // 2) Strip diacritics / special combining marks (Morena coverage is limited)
   //    Examples fixed: ø → o, ǫ → o, ñ → n, é → e, etc.
