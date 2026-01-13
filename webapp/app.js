@@ -941,7 +941,8 @@ if (btnReadyEl) {
     if (screenChamber) screenChamber.classList.remove("hidden");
 
     try { injectFullscreenSeal(); } catch(e) {}
-    /* font chooser disabled: themes handle comfort */
+    // Typographie — choix discret en Chambre (persisté localement)
+    try { injectFontChooser(); } catch(e) {}
   });
 }
 
