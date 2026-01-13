@@ -908,7 +908,7 @@ body.font-standard .quiz-option-text{
   letter-spacing: .18em;
   text-transform: uppercase;
   font-weight: 700;
-  color: rgba(228,201,140,.85);
+  color: rgba(var(--vo-halo-rgb), .85);
   text-shadow: 0 2px 18px rgba(var(--vo-halo-rgb), .18);
 }
 
