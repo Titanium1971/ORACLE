@@ -66,7 +66,8 @@ function velvetNormalize(input) {
 // =========================================================================
 
 const THEME_STORAGE_KEY = "VO_THEME_MODE_V1";
-const DEFAULT_THEME = "velvet"; // Canon Velvet
+const DEFAULT_THEME = "velvet"; // Couleur canon (or)
+const DEFAULT_FONT = "standard"; // Base du jeu : police standard
 
 function getSavedTheme() {
   try {
@@ -79,11 +80,7 @@ function applyTheme(themeId, persist = false) {
   const t = (themeId === "sepia" || themeId === "slate" || themeId === "velvet") ? themeId : DEFAULT_THEME;
   document.documentElement.setAttribute("data-vo-theme", t);
 
-  // Polices : 2 rendus seulement (velvet / standard). Confort -> standard.
-  try {
-    if (t === "velvet") applyFontMode("velvet");
-    else applyFontMode("standard");
-  } catch(e) {}
+  // Police indépendante du thème (choix utilisateur)
 
   if (persist) {
     try { localStorage.setItem(THEME_STORAGE_KEY, t); } catch(_) {}
@@ -198,9 +195,9 @@ function applyFontMode(mode) {
 function getSavedFontMode() {
   try {
     const v = localStorage.getItem(FONT_STORAGE_KEY);
-    return (v === "standard" || v === "velvet") ? v : "velvet";
+    return (v === "standard" || v === "velvet") ? v : DEFAULT_FONT;
   } catch (_) {
-    return "velvet";
+    return DEFAULT_FONT;
   }
 }
 
@@ -1570,5 +1567,6 @@ function voUpdateHaloFromProgress(p){ // p: 0..1 (0 début, 1 fin)
   const spread = 14 + Math.round(20 * intensity);
   const alpha  = 0.06 + 0.14 * intensity;
   halo.classList.add("active");
-  halo.style.boxShadow = `0 0 ${spread}px rgba(255, 215, 160, ${alpha})`;
+  const rgb = (getComputedStyle(document.documentElement).getPropertyValue("--vo-halo-rgb") || "200,169,106").trim();
+  halo.style.boxShadow = `0 0 ${spread}px rgba(${rgb}, ${alpha})`;
 }

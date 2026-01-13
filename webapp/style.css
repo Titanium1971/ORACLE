@@ -301,7 +301,7 @@ button, input, textarea, select{
   appearance:none;
   border-radius:999px;
   border:1px solid rgba(200,169,106,.30);
-  background: rgba(200,169,106,.06);
+  background: rgba(var(--vo-halo-rgb), .06);
   color: rgba(228,201,140,.92);
   padding:10px 14px;
   font-size:11px;
@@ -506,7 +506,7 @@ button, input, textarea, select{
   padding:14px 14px 12px;
   border-radius:18px;
   background: linear-gradient(180deg, #111, #070707);
-  border:1px solid rgba(200,169,106,.22);
+  border:1px solid rgba(var(--vo-halo-rgb), .22);
   box-shadow: 0 16px 40px rgba(0,0,0,.85), 0 0 0 1px rgba(0,0,0,.6);
   font-size:14px;
   line-height:1.7;
@@ -878,9 +878,9 @@ body.font-standard .quiz-option-text{
   inset: -18px;
   border-radius: 999px;
   background: radial-gradient(circle at center,
-    rgba(200,169,106,.22) 0%,
-    rgba(228,201,140,.14) 35%,
-    rgba(200,169,106,.06) 55%,
+    rgba(var(--vo-halo-rgb), .22) 0%,
+    rgba(var(--vo-halo-rgb), .14) 35%,
+    rgba(var(--vo-halo-rgb), .06) 55%,
     rgba(0,0,0,0) 72%
   );
   filter: blur(10px);
@@ -895,9 +895,9 @@ body.font-standard .quiz-option-text{
   position:absolute;
   inset:-3px;
   border-radius:999px;
-  border: 2px solid rgba(200,169,106,.32);
-  border-top-color: rgba(200,169,106,.95);
-  box-shadow: 0 0 36px rgba(200,169,106,.18);
+  border: 2px solid rgba(var(--vo-halo-rgb), .32);
+  border-top-color: rgba(var(--vo-halo-rgb), .95);
+  box-shadow: 0 0 36px rgba(var(--vo-halo-rgb), .18);
   animation: ritualSpin 1.8s linear infinite;
   pointer-events: none;
 }
@@ -909,7 +909,7 @@ body.font-standard .quiz-option-text{
   text-transform: uppercase;
   font-weight: 700;
   color: rgba(228,201,140,.85);
-  text-shadow: 0 2px 18px rgba(200,169,106,.18);
+  text-shadow: 0 2px 18px rgba(var(--vo-halo-rgb), .18);
 }
 
 @keyframes ritualHalo{
@@ -924,8 +924,8 @@ body.font-standard .quiz-option-text{
 
 .ritual-loading.settling .ritual-ring::before{
   animation: none;
-  border-top-color: rgba(200,169,106,.55);
-  box-shadow: 0 0 34px rgba(200,169,106,.12);
+  border-top-color: rgba(var(--vo-halo-rgb), .55);
+  box-shadow: 0 0 34px rgba(var(--vo-halo-rgb), .12);
 }
 
 
@@ -1033,8 +1033,8 @@ body.font-standard .quiz-option-text{
   border-radius:inherit;
   background: conic-gradient(
     from -90deg,
-    rgba(200,169,106,0.40) calc(var(--p) * 1turn),
-    rgba(200,169,106,0.06) 0
+    var(--vo-ring-strong) calc(var(--p) * 1turn),
+    var(--vo-ring-faint) 0
   );
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
   mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
@@ -1076,7 +1076,7 @@ body.font-standard .quiz-option-text{
    Application: <html data-vo-theme="...">
    =========================== */
 
-:root{ --vo-line-height: 1.45; }
+:root{ --vo-line-height: 1.45; --vo-halo-rgb: 200,169,106; --vo-ring-strong: rgba(200,169,106,0.40); --vo-ring-faint: rgba(200,169,106,0.06); }
 
 html[data-vo-theme="velvet"]{
   /* Canon actuel (réaffirmé) */
@@ -1092,6 +1092,9 @@ html[data-vo-theme="velvet"]{
   --bad-glow: rgba(168,92,92,0.26);
   --gold-glow: rgba(200,169,106,0.48);
   --gold-glow-soft: rgba(228,201,140,0.20);
+  --vo-halo-rgb: 200,169,106;
+  --vo-ring-strong: rgba(200,169,106,0.40);
+  --vo-ring-faint: rgba(200,169,106,0.06);
 }
 
 html[data-vo-theme="sepia"]{
@@ -1113,6 +1116,9 @@ html[data-vo-theme="sepia"]{
   --gold-glow-soft: rgba(215,193,141,0.18);
 
   --vo-line-height: 1.52;
+  --vo-halo-rgb: 184,163,106;
+  --vo-ring-strong: rgba(184,163,106,0.38);
+  --vo-ring-faint: rgba(184,163,106,0.06);
 }
 
 html[data-vo-theme="slate"]{
@@ -1134,6 +1140,9 @@ html[data-vo-theme="slate"]{
   --gold-glow-soft: rgba(182,195,208,0.16);
 
   --vo-line-height: 1.48;
+  --vo-halo-rgb: 143,163,184;
+  --vo-ring-strong: rgba(143,163,184,0.34);
+  --vo-ring-faint: rgba(143,163,184,0.06);
 }
 
 /* Applique une respiration typographique douce */
