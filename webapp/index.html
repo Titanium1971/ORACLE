@@ -67,7 +67,12 @@
         <!-- ✅ Choix de police : géré par app.js (injectFontChooser) -->
         <!-- (Le bloc HTML "Typographie" a été retiré pour éviter tout doublon.) -->
 
-        <button class="chamber-cta" id="btn-start-ritual">● Commencer le rituel</button>
+        
+        <div class="vo-theme-entry">
+          <div class="vo-theme-title">Confort visuel</div>
+          <button class="vo-theme-open" id="btn-theme-open" type="button">Choisir un thème</button>
+        </div>
+<button class="chamber-cta" id="btn-start-ritual">● Commencer le rituel</button>
       </div>
     </div>
 
@@ -226,5 +231,42 @@
 
   <!-- Ton script applicatif -->
   <script src="app.js?v=1"></script>
-</body>
+
+  <!-- THÈMES VISUELS (Confort) -->
+  <div class="vo-theme-modal hidden" id="vo-theme-modal" role="dialog" aria-modal="true" aria-labelledby="vo-theme-h">
+    <div class="vo-theme-card">
+      <div class="vo-theme-head">
+        <div class="vo-theme-kicker">Velvet Oracle</div>
+        <div class="vo-theme-h" id="vo-theme-h">Choisissez le confort visuel du rituel</div>
+        <div class="vo-theme-sub">Ce choix n’altère rien. Il éclaire seulement la lecture.</div>
+      </div>
+
+      <div class="vo-theme-grid" role="list">
+        <button class="vo-theme-item" data-theme="velvet" role="listitem" type="button">
+          <div class="vo-theme-swatch sw-velvet" aria-hidden="true"></div>
+          <div class="vo-theme-name">Noir profond</div>
+          <div class="vo-theme-desc">Canon Velvet</div>
+        </button>
+
+        <button class="vo-theme-item" data-theme="sepia" role="listitem" type="button">
+          <div class="vo-theme-swatch sw-sepia" aria-hidden="true"></div>
+          <div class="vo-theme-name">Sépia doux</div>
+          <div class="vo-theme-desc">Confort visuel</div>
+        </button>
+
+        <button class="vo-theme-item" data-theme="slate" role="listitem" type="button">
+          <div class="vo-theme-swatch sw-slate" aria-hidden="true"></div>
+          <div class="vo-theme-name">Ardoise froide</div>
+          <div class="vo-theme-desc">Clarté</div>
+        </button>
+      </div>
+
+      <div class="vo-theme-actions">
+        <button class="vo-theme-cancel" id="btn-theme-cancel" type="button">Revenir</button>
+        <button class="vo-theme-confirm" id="btn-theme-confirm" type="button">Continuer</button>
+      </div>
+    </div>
+  </div>
+
+\1
 </html>

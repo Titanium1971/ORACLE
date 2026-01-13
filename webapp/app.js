@@ -64,6 +64,97 @@ function velvetNormalize(input) {
 // =========================================================================
 // Velvet Font Choice — Velvet / Standard (persistant)
 // =========================================================================
+
+const THEME_STORAGE_KEY = "VO_THEME_MODE_V1";
+const DEFAULT_THEME = "velvet"; // Canon Velvet
+
+function getSavedTheme() {
+  try {
+    const t = localStorage.getItem(THEME_STORAGE_KEY);
+    return (t === "velvet" || t === "sepia" || t === "slate") ? t : null;
+  } catch(_) { return null; }
+}
+
+function applyTheme(themeId, persist = false) {
+  const t = (themeId === "sepia" || themeId === "slate" || themeId === "velvet") ? themeId : DEFAULT_THEME;
+  document.documentElement.setAttribute("data-vo-theme", t);
+
+  // Polices : 2 rendus seulement (velvet / standard). Confort -> standard.
+  try {
+    if (t === "velvet") applyFontMode("velvet");
+    else applyFontMode("standard");
+  } catch(e) {}
+
+  if (persist) {
+    try { localStorage.setItem(THEME_STORAGE_KEY, t); } catch(_) {}
+  }
+}
+
+function initThemeOnLoad() {
+  const saved = getSavedTheme();
+  applyTheme(saved || DEFAULT_THEME, false);
+}
+
+function openThemeModal(opts = {}) {
+  const modal = document.getElementById("vo-theme-modal");
+  const confirm = document.getElementById("btn-theme-confirm");
+  const cancel = document.getElementById("btn-theme-cancel");
+  if (!modal || !confirm || !cancel) {
+    return Promise.resolve(getSavedTheme() || DEFAULT_THEME);
+  }
+
+  const force = !!opts.force;
+  const allowCancel = !!opts.allowCancel;
+
+  let chosen = getSavedTheme() || DEFAULT_THEME;
+
+  // UI state
+  const items = Array.from(modal.querySelectorAll(".vo-theme-item"));
+  function syncSelected() {
+    for (const el of items) {
+      const is = (el.getAttribute("data-theme") === chosen);
+      el.setAttribute("aria-selected", is ? "true" : "false");
+    }
+  }
+
+  syncSelected();
+
+  // Cancel visibility
+  cancel.style.display = allowCancel ? "" : "none";
+
+  modal.classList.remove("hidden");
+
+  return new Promise((resolve) => {
+    function cleanup(result) {
+      modal.classList.add("hidden");
+      items.forEach(it => it.removeEventListener("click", onPick));
+      confirm.removeEventListener("click", onConfirm);
+      cancel.removeEventListener("click", onCancel);
+      resolve(result);
+    }
+
+    function onPick(e) {
+      const id = e.currentTarget.getAttribute("data-theme");
+      if (id) chosen = id;
+      syncSelected();
+    }
+
+    function onConfirm() {
+      applyTheme(chosen, true);
+      cleanup(chosen);
+    }
+
+    function onCancel() {
+      if (!allowCancel && force) return;
+      cleanup(null);
+    }
+
+    items.forEach(it => it.addEventListener("click", onPick));
+    confirm.addEventListener("click", onConfirm);
+    cancel.addEventListener("click", onCancel);
+  });
+}
+
 const FONT_STORAGE_KEY = "vo_font_mode"; // "velvet" | "standard"
 
 function applyFontMode(mode) {
@@ -270,6 +361,7 @@ window.addEventListener("unhandledrejection", (e) => {
 console.log("✅ DOM ready — init()");
 
 document.addEventListener("DOMContentLoaded", () => {
+  try { initThemeOnLoad(); } catch(e) {}
   try { injectFullscreenSeal(); } catch(e) {}
 });
 
@@ -781,6 +873,8 @@ const screenFeedbackFinal = document.querySelector(".screen-feedback-final");
 const btnReadyEl = document.getElementById("btn-ready");
 const btnStartRitualEl = document.getElementById("btn-start-ritual");
 
+const btnThemeOpenEl = document.getElementById("btn-theme-open");
+
 const quizIndexEl = document.getElementById("quiz-index");
 const quizTotalEl = document.getElementById("quiz-total");
 const quizQuestionEl = document.getElementById("quiz-question");
@@ -847,14 +941,30 @@ if (btnReadyEl) {
     if (screenChamber) screenChamber.classList.remove("hidden");
 
     try { injectFullscreenSeal(); } catch(e) {}
-    try { injectFontChooser(); } catch(e) {}
+    /* font chooser disabled: themes handle comfort */
   });
 }
 
+
+if (btnThemeOpenEl) {
+  btnThemeOpenEl.addEventListener("click", async () => {
+    if (!voTapGuard.allow("btn-theme-open", 500)) return;
+    await openThemeModal({ allowCancel: true, force: false });
+  });
+}
 if (btnStartRitualEl) {
   btnStartRitualEl.addEventListener("click", async () => {
     if (!voTapGuard.allow("btn-start-ritual", 700)) return;
-    window.Telegram?.WebApp?.expand();
+    
+    // 🎛️ Thème (confort visuel) — seulement au lancement du rituel
+    try {
+      const has = getSavedTheme();
+      if (!has) {
+        const picked = await openThemeModal({ allowCancel: false, force: true });
+        if (!picked) return;
+      }
+    } catch(e) {}
+window.Telegram?.WebApp?.expand();
     window.Telegram?.WebApp?.requestFullscreen?.();
     setTimeout(() => window.Telegram?.WebApp?.expand(), 250);
     console.log("🟡 CLICK btn-start-ritual — démarrage rituel");

@@ -1068,3 +1068,243 @@ body.font-standard .quiz-option-text{
 .quiz-timer{
   display:none !important;
 }
+
+
+
+/* ===========================
+   THÈMES VISUELS — Velvet / Sépia / Ardoise
+   Application: <html data-vo-theme="...">
+   =========================== */
+
+:root{ --vo-line-height: 1.45; }
+
+html[data-vo-theme="velvet"]{
+  /* Canon actuel (réaffirmé) */
+  --velvet-black:#050505;
+  --card-bg:#101010;
+  --text-main:#f5f2e8;
+  --text-muted:rgba(245,242,232,.72);
+  --velvet-gold:#c8a96a;
+  --velvet-gold-soft:#e4c98c;
+  --neutral-glow: rgba(200,169,106,0.22);
+  --neutral-glow-2: rgba(245,242,232,0.10);
+  --good-glow: rgba(111,174,143,0.32);
+  --bad-glow: rgba(168,92,92,0.26);
+  --gold-glow: rgba(200,169,106,0.48);
+  --gold-glow-soft: rgba(228,201,140,0.20);
+}
+
+html[data-vo-theme="sepia"]{
+  --velvet-black:#1A1714;
+  --card-bg:#14110F;
+  --text-main:#EDE6D8;
+  --text-muted:rgba(237,230,216,.72);
+  --velvet-gold:#B8A36A;
+  --velvet-gold-soft:#D7C18D;
+  --card-border:rgba(184,163,106,.38);
+  --option-bg:#191512;
+  --option-border:rgba(255,255,255,.06);
+
+  --neutral-glow: rgba(184,163,106,0.18);
+  --neutral-glow-2: rgba(237,230,216,0.08);
+  --good-glow: rgba(124,154,138,0.30);
+  --bad-glow: rgba(154,106,106,0.24);
+  --gold-glow: rgba(184,163,106,0.42);
+  --gold-glow-soft: rgba(215,193,141,0.18);
+
+  --vo-line-height: 1.52;
+}
+
+html[data-vo-theme="slate"]{
+  --velvet-black:#12161A;
+  --card-bg:#0F1317;
+  --text-main:#E4EAF0;
+  --text-muted:rgba(228,234,240,.70);
+  --velvet-gold:#8FA3B8;
+  --velvet-gold-soft:#B6C3D0;
+  --card-border:rgba(143,163,184,.38);
+  --option-bg:#12181E;
+  --option-border:rgba(255,255,255,.06);
+
+  --neutral-glow: rgba(143,163,184,0.18);
+  --neutral-glow-2: rgba(228,234,240,0.08);
+  --good-glow: rgba(111,159,176,0.28);
+  --bad-glow: rgba(143,111,111,0.22);
+  --gold-glow: rgba(143,163,184,0.38);
+  --gold-glow-soft: rgba(182,195,208,0.16);
+
+  --vo-line-height: 1.48;
+}
+
+/* Applique une respiration typographique douce */
+body{ line-height: var(--vo-line-height); }
+
+/* ===========================
+   UI — Sélecteur de thème (Chambre)
+   =========================== */
+
+.vo-theme-entry{
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(200,169,106,.20);
+  background: rgba(0,0,0,.18);
+  border-radius: 14px;
+}
+
+.vo-theme-title{
+  font-family: var(--font-display);
+  color: var(--text-main);
+  font-size: 14px;
+  letter-spacing: .2px;
+  opacity: .92;
+}
+
+.vo-theme-open{
+  appearance: none;
+  border: 1px solid rgba(200,169,106,.30);
+  background: rgba(0,0,0,.22);
+  color: var(--text-main);
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 12.5px;
+}
+
+.vo-theme-open:active{ transform: scale(.98); }
+
+/* ===========================
+   Modal Thème
+   =========================== */
+
+.vo-theme-modal{
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(0,0,0,.68);
+  backdrop-filter: blur(6px);
+}
+
+.vo-theme-modal.hidden{ display: none; }
+
+.vo-theme-card{
+  width: min(520px, 100%);
+  border-radius: 22px;
+  border: 1px solid rgba(200,169,106,.28);
+  background: rgba(10,10,10,.92);
+  box-shadow: 0 18px 70px rgba(0,0,0,.55);
+  padding: 18px 16px 14px;
+}
+
+.vo-theme-kicker{
+  color: var(--text-muted);
+  font-size: 12px;
+  letter-spacing: .35px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.vo-theme-h{
+  font-family: var(--font-display);
+  color: var(--text-main);
+  font-size: 18px;
+  line-height: 1.2;
+  margin-bottom: 8px;
+}
+
+.vo-theme-sub{
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.35;
+  margin-bottom: 14px;
+}
+
+.vo-theme-grid{
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+@media (min-width: 420px){
+  .vo-theme-grid{ grid-template-columns: 1fr 1fr 1fr; }
+}
+
+.vo-theme-item{
+  text-align: left;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.03);
+  padding: 12px 10px;
+  color: var(--text-main);
+}
+
+.vo-theme-item[aria-selected="true"]{
+  border-color: rgba(200,169,106,.70);
+  box-shadow: 0 0 0 1px rgba(200,169,106,.35), 0 10px 26px rgba(200,169,106,.08);
+}
+
+.vo-theme-swatch{
+  width: 100%;
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.10);
+  margin-bottom: 10px;
+}
+
+.sw-velvet{
+  background: radial-gradient(120px 60px at 30% 30%, rgba(200,169,106,.35), transparent 60%),
+              linear-gradient(180deg, #0B0B0C, #050505);
+}
+
+.sw-sepia{
+  background: radial-gradient(120px 60px at 30% 30%, rgba(184,163,106,.28), transparent 60%),
+              linear-gradient(180deg, #1A1714, #14110F);
+}
+
+.sw-slate{
+  background: radial-gradient(120px 60px at 30% 30%, rgba(143,163,184,.22), transparent 60%),
+              linear-gradient(180deg, #12161A, #0F1317);
+}
+
+.vo-theme-name{
+  font-family: var(--font-display);
+  font-size: 13px;
+  margin-bottom: 3px;
+}
+
+.vo-theme-desc{
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.vo-theme-actions{
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.vo-theme-cancel,
+.vo-theme-confirm{
+  flex: 1;
+  border-radius: 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(200,169,106,.28);
+  background: rgba(0,0,0,.18);
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.vo-theme-confirm{
+  border-color: rgba(200,169,106,.55);
+  background: rgba(200,169,106,.10);
+}
+
+.vo-theme-cancel:active,
+.vo-theme-confirm:active{ transform: scale(.99); }
