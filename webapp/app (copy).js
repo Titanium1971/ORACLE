@@ -430,7 +430,6 @@ applyFontMode(getSavedFontMode());
 // =========================================================================
 let ritualAttemptId = null;
 let ritualPlayerTelegramUserId = null;
-let voNoFreeRituals = false; // ✅ bloque l'expérience si quota gratuit épuisé
 
 /** safe: récupère l'user id Telegram si dispo */
 function getTelegramUserId(){
@@ -503,31 +502,15 @@ async function ensureAttemptStarted(){
   try {
     console.log("🟡 HTTP /ritual/start →", url);
     const r = await fetch(url, { method: "POST", headers: buildApiHeaders(), body: JSON.stringify(body), cache: "no-store" });
-
-    // ✅ Toujours tenter de lire le JSON (même en erreur) pour distinguer un blocage quota
-    let data = null;
-    try { data = await r.json(); } catch(e) {}
-
-    // ✅ Quota épuisé → afficher l'écran "Rituel indisponible" et stopper
-    if (r.status === 403 && (data?.error === "no_free_rituals" || data?.error_code === "no_free_rituals")) {
-      voNoFreeRituals = true;
-      try { hideRitualLoading(); } catch(e) {}
-      try { renderVelvetUnavailableScreen(); } catch(e) {}
-      throw new Error("NO_FREE_RITUALS");
-    }
-
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-
+    const data = await r.json();
     const attempt = data?.attempt_id || data?.attemptId || data?.id || "";
     if (!attempt) throw new Error("NO_ATTEMPT_ID");
     ritualAttemptId = String(attempt);
     console.log("✅ attempt_id obtenu =", ritualAttemptId);
     return ritualAttemptId;
   } catch (e) {
-    // Si quota épuisé : on remonte l'erreur pour arrêter le flow
-    if (String(e?.message || e).includes("NO_FREE_RITUALS")) throw e;
-
-    // fallback propre: on ne bloque pas le rituel si le backend est indisponible
+    // fallback propre: on ne bloque pas le rituel
     ritualAttemptId = generateLocalAttemptId();
     console.warn("⚠️ /ritual/start indisponible → fallback attempt_id =", ritualAttemptId, "| reason:", e?.message || e);
     return ritualAttemptId;
@@ -1023,7 +1006,7 @@ window.Telegram?.WebApp?.expand();
 
     try {
       // 1) attempt_id (peut être lent)
-      try { await ensureAttemptStarted(); } catch(e) { if (String(e?.message||e).includes("NO_FREE_RITUALS")) return; }
+      try { await ensureAttemptStarted(); } catch(e) {}
 
       // 2) questions (latence principale)
       await ensureQuizData();
