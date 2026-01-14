@@ -894,36 +894,7 @@ def ritual_start():
                 "details": p
             }), 500
 
-        
-        # 🔒 BETA — 3 rituels gratuits + verrou "un rituel actif" (source de vérité: backend)
-        try:
-            found_player = airtable_find_one(players_table, f"{{telegram_user_id}}='{str(telegram_user_id)}'")
-            player_fields = (found_player.get("record") or {}).get("fields", {}) if found_player.get("ok") else {}
-        except Exception as _e:
-            player_fields = {}
-
-        remaining = int(player_fields.get("free_rituals_remaining") or 0)
-        used = int(player_fields.get("free_rituals_used") or 0)
-        active_attempt = str(player_fields.get("active_attempt_label") or "").strip()
-
-        # Idempotence / verrou : si un rituel est déjà démarré, on renvoie le même attempt_id
-        if active_attempt:
-            return jsonify({
-                "ok": True,
-                "version": APP_VERSION,
-                "attempt_id": active_attempt,
-                "player_record_id": p["record_id"],
-                "idempotent": True
-            })
-
-        # Gate : aucun rituel gratuit restant
-        if remaining <= 0:
-            return jsonify({
-                "ok": False,
-                "error": "no_free_rituals"
-            }), 403
-
-# ✅ Update telegram_username if provided (can change over time)
+        # ✅ Update telegram_username if provided (can change over time)
         maybe_update_player_username(players_table, p.get('record_id'), payload.get('telegram_username') or payload.get('telegramUsername'))
 
         # Translate mode for Airtable (app.js sends "rituel_full_v1" but Airtable expects "PROD" or "TEST")
@@ -945,8 +916,6 @@ def ritual_start():
             "mode": airtable_mode,
             # BETA: store environment explicitly if the field exists
             "env": "BETA",
-            "status": "STARTED",
-            "is_free": True,
             # If score_max is not provided at start, default to 15 (rituel standard)
             "score_max": int(payload.get("score_max") or payload.get("total") or 15),
             # Human-readable label for debugging (safe if field exists)
@@ -962,21 +931,6 @@ def ritual_start():
         )
 
         created = airtable_create(attempts_table, fields)
-
-        # Retry si la table BETA n'a pas certains champs techniques (status/is_free)
-        if (not created.get("ok")
-                and created.get("status") == 422
-                and isinstance(created.get("data"), dict)
-                and isinstance(created["data"].get("error"), dict)
-                and "Unknown field name" in (created["data"]["error"].get("message") or "")):
-            msg = created["data"]["error"].get("message") or ""
-            if ("status" in msg) or ("is_free" in msg):
-                safe_fields = dict(fields)
-                safe_fields.pop("status", None)
-                safe_fields.pop("is_free", None)
-                print("🟠 retry create attempt without status/is_free (unknown fields)", flush=True)
-                created = airtable_create(attempts_table, safe_fields)
-
 
         # Retry si la table BETA n'a pas le champ "mode"
         if (not created.get("ok")
@@ -1006,31 +960,7 @@ def ritual_start():
                 "airtable_response": created.get("data")
             }), 500
 
-        
-        # ✅ Update player counters + lock (backend authority)
-        new_remaining = max(0, remaining - 1)
-        new_used = used + 1
-        upd = airtable_update(players_table, p["record_id"], {
-            "free_rituals_remaining": new_remaining,
-            "free_rituals_used": new_used,
-            "active_attempt_label": created["data"]["id"],
-        })
-        if not upd.get("ok"):
-            # best effort: mark attempt refunded to avoid inconsistencies
-            try:
-                airtable_update(attempts_table, created["data"]["id"], {
-                    "status": "BUG_REFUNDED",
-                    "error_code": "PLAYER_UPDATE_FAIL",
-                })
-            except Exception:
-                pass
-            return jsonify({
-                "ok": False,
-                "error": "player_counter_update_failed",
-                "details": upd
-            }), 500
-
-return jsonify({
+        return jsonify({
             "ok": True,
             "version": APP_VERSION,
             "attempt_id": created["data"]["id"],
@@ -1137,8 +1067,6 @@ def ritual_complete():
             "status": payload.get("status") or "COMPLETED",
             # Mirror env on the attempt row (field exists in BETA schema)
             "env": "BETA",
-            "status": "STARTED",
-            "is_free": True,
         }
 
         # Ensure score_max is always present on completion (BETA schema expects it)
@@ -1444,14 +1372,7 @@ def ritual_complete():
     except Exception as e:
         print(f"❌ NOTION WRITE EXCEPTION: {e}")
 
-    
-    # 🔒 Clear active attempt lock (rituel terminé)
-    try:
-        airtable_update(players_table, p["record_id"], {"active_attempt_label": ""})
-    except Exception:
-        pass
-
-return jsonify({
+    return jsonify({
         "ok":
         True,
         "version":

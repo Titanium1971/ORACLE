@@ -510,18 +510,17 @@ async function ensureAttemptStarted(){
     console.log("✅ attempt_id obtenu =", ritualAttemptId);
     return ritualAttemptId;
   } catch (e) {
-    // 🔒 Sans backend, pas de rituel (évite tout contournement des compteurs gratuits)
-    console.warn("⛔ /ritual/start impossible → rituel indisponible", e?.message || e);
-    try { renderVelvetUnavailableScreen(); } catch(_) {}
-    throw e;
+    // fallback propre: on ne bloque pas le rituel
+    ritualAttemptId = generateLocalAttemptId();
+    console.warn("⚠️ /ritual/start indisponible → fallback attempt_id =", ritualAttemptId, "| reason:", e?.message || e);
+    return ritualAttemptId;
   }
 }
 
 /** envoie la clôture au backend (visible dans Network) */
 async function postRitualComplete(payload){
   // payload est ton objet final (score/temps/answers/feedback etc.)
-  const attempt_id = ritualAttemptId;
-  if (!attempt_id) { try { renderVelvetUnavailableScreen(); } catch(_) {} throw new Error('NO_ATTEMPT_ID'); }
+  const attempt_id = ritualAttemptId || generateLocalAttemptId();
   ritualAttemptId = attempt_id;
 
   ritualPlayerTelegramUserId = ritualPlayerTelegramUserId || getTelegramUserId();
