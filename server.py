@@ -897,40 +897,6 @@ def ritual_start():
         # ✅ Update telegram_username if provided (can change over time)
         maybe_update_player_username(players_table, p.get('record_id'), payload.get('telegram_username') or payload.get('telegramUsername'))
 
-        # 🔒 BETA — 3 rituels gratuits + verrou "un rituel actif" (source de vérité: backend)
-        # On lit le joueur complet pour obtenir: free_rituals_remaining / free_rituals_used / active_attempt_label
-        try:
-            found_player = airtable_find_one(players_table, f"{{telegram_user_id}}='{str(telegram_user_id)}'")
-            player_fields = (found_player.get("record") or {}).get("fields", {}) if found_player.get("ok") else {}
-        except Exception as _e:
-            player_fields = {}
-
-        active_attempt_label = str(player_fields.get("active_attempt_label") or "").strip()
-        try:
-            remaining = int(player_fields.get("free_rituals_remaining") or 0)
-        except Exception:
-            remaining = 0
-        try:
-            used = int(player_fields.get("free_rituals_used") or 0)
-        except Exception:
-            used = 0
-
-        # Idempotence: si un rituel est déjà STARTED, on renvoie la même attempt_id
-        if active_attempt_label:
-            return jsonify({
-                "ok": True,
-                "version": APP_VERSION,
-                "attempt_id": active_attempt_label,
-                "player_record_id": p["record_id"],
-                "idempotent": True
-            })
-
-        # Blocage si plus de rituels gratuits
-        if remaining <= 0:
-            return jsonify({"ok": False, "error": "no_free_rituals"}), 403
-
-
-
         # Translate mode for Airtable (app.js sends "rituel_full_v1" but Airtable expects "PROD" or "TEST")
         raw_mode = payload.get("mode") or payload.get("env") or "BETA"
         if raw_mode in ("rituel_full_v1", "ritual_full_v1", "rituel_v1",
@@ -994,25 +960,6 @@ def ritual_start():
                 "airtable_response": created.get("data")
             }), 500
 
-        
-        # ✅ Décrémenter / incrémenter les compteurs et poser le verrou actif
-        try:
-            upd_fields = {
-                "free_rituals_remaining": max(0, remaining - 1),
-                "free_rituals_used": used + 1,
-                "active_attempt_label": created["data"]["id"]
-            }
-            upd = airtable_update(players_table, str(p["record_id"]), upd_fields)
-            if not upd.get("ok"):
-                print("🟠 player_counter_update_failed =", upd, flush=True)
-                return jsonify({
-                    "ok": False,
-                    "error": "player_counter_update_failed",
-                    "details": upd
-                }), 500
-        except Exception as _e:
-            print("🟠 player_counter_update_exception =", repr(_e), flush=True)
-
         return jsonify({
             "ok": True,
             "version": APP_VERSION,
@@ -1029,6 +976,7 @@ def ritual_start():
             "error": "internal_server_error",
             "message": str(e)
         }), 500
+
 
 @app.route("/ritual/complete", methods=["POST", "OPTIONS"])
 def ritual_complete():
@@ -1079,7 +1027,6 @@ def ritual_complete():
 
     # ✅ Update telegram_username if provided (can change over time)
     maybe_update_player_username(players_table, p.get('record_id'), payload.get('telegram_username') or payload.get('telegramUsername'))
-
 
     # 1) Log raw payload (always)
     raw_fields = {
@@ -1425,14 +1372,7 @@ def ritual_complete():
     except Exception as e:
         print(f"❌ NOTION WRITE EXCEPTION: {e}")
 
-    
-    # 🔓 Clear active rituel lock (best-effort)
-    try:
-        airtable_update(players_table, str(p["record_id"]), {"active_attempt_label": ""})
-    except Exception as _e:
-        print("🟠 clear_active_attempt_failed =", repr(_e), flush=True)
-
-return jsonify({
+    return jsonify({
         "ok":
         True,
         "version":
