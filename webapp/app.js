@@ -502,7 +502,16 @@ async function ensureAttemptStarted(){
   try {
     console.log("🟡 HTTP /ritual/start →", url);
     const r = await fetch(url, { method: "POST", headers: buildApiHeaders(), body: JSON.stringify(body), cache: "no-store" });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    if (!r.ok){
+      let errData = null;
+      try{ errData = await r.json(); }catch(_e){}
+      if (r.status === 403 && errData && errData.error === "no_free_rituals"){
+        console.warn("🚫 no_free_rituals → verrou UX");
+        renderVelvetUnavailableScreen();
+        throw new Error("no_free_rituals");
+      }
+      throw new Error(`HTTP ${r.status}`);
+    }
     const data = await r.json();
     const attempt = data?.attempt_id || data?.attemptId || data?.id || "";
     if (!attempt) throw new Error("NO_ATTEMPT_ID");
@@ -511,9 +520,9 @@ async function ensureAttemptStarted(){
     return ritualAttemptId;
   } catch (e) {
     // fallback propre: on ne bloque pas le rituel
-    ritualAttemptId = generateLocalAttemptId();
-    console.warn("⚠️ /ritual/start indisponible → fallback attempt_id =", ritualAttemptId, "| reason:", e?.message || e);
-    return ritualAttemptId;
+    console.warn("⚠️ /ritual/start indisponible → pas de fallback (sécurité)", "| reason:", e?.message || e);
+    renderVelvetUnavailableScreen();
+    throw e;
   }
 }
 
