@@ -502,13 +502,14 @@ async function ensureAttemptStarted(){
   try {
     console.log("🟡 HTTP /ritual/start →", url);
     const r = await fetch(url, { method: "POST", headers: buildApiHeaders(), body: JSON.stringify(body), cache: "no-store" });
-    if (!r.ok){
-      let errData = null;
-      try{ errData = await r.json(); }catch(_e){}
-      if (r.status === 403 && errData && errData.error === "no_free_rituals"){
-        console.warn("🚫 no_free_rituals → verrou UX");
+    if (!r.ok) {
+      let errBody = null;
+      try { errBody = await r.json(); } catch(e) {}
+      const errCode = errBody?.error || errBody?.code || "";
+      if (r.status === 403 && errCode === "no_free_rituals") {
+        console.warn("⛔ no_free_rituals → ritual blocked");
         renderVelvetUnavailableScreen();
-        throw new Error("no_free_rituals");
+        throw new Error("NO_FREE_RITUALS");
       }
       throw new Error(`HTTP ${r.status}`);
     }
@@ -519,8 +520,8 @@ async function ensureAttemptStarted(){
     console.log("✅ attempt_id obtenu =", ritualAttemptId);
     return ritualAttemptId;
   } catch (e) {
-    // fallback propre: on ne bloque pas le rituel
-    console.warn("⚠️ /ritual/start indisponible → pas de fallback (sécurité)", "| reason:", e?.message || e);
+    console.warn("⚠️ /ritual/start failed:", e?.message || e);
+    // No local fallback: backend is authoritative for ritual eligibility
     renderVelvetUnavailableScreen();
     throw e;
   }
