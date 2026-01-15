@@ -1,24 +1,3 @@
-
-def _norm_tg_username(u: str) -> str:
-    u = (u or "").strip()
-    if u.startswith("@"):
-        u = u[1:]
-    return u.lower().strip()
-
-
-
-def airtable_find_one_sorted(table, formula, sort_field="created_time", sort_direction="desc"):
-    """Find one record matching formula, sorted. Requires a sortable field (e.g., created_time if present)."""
-    params = {"filterByFormula": formula, "maxRecords": 1}
-    # Airtable sorting params: sort[0][field], sort[0][direction]
-    if sort_field:
-        params["sort[0][field]"] = sort_field
-        params["sort[0][direction]"] = sort_direction
-    res = airtable_list_records(table, params=params)
-    if not res.get("ok"):
-        return {"ok": False, "error": "list_failed", "details": res}
-    records = res.get("records") or []
-    return {"ok": True, "record": records[0] if records else None}
 # server.py — Velvet MCP Core (local, propre, souverain)
 # -----------------------------------------------------
 # - /health avec ping Airtable réel
@@ -854,10 +833,37 @@ def upsert_player_by_telegram_user_id(players_table, telegram_user_id):
 
 
 
+def _merge_application_fields(source_fields: dict, target_fields: dict) -> dict:
+    """Copy only safe 'application' fields from the form record into the target player.
+    Never overwrites non-empty target fields.
+    """
+    SAFE_FIELDS = [
+        "email",
+        "first_name",
+        "last_name",
+        "phone",
+        "motivation_text",
+        "entry_channel",
+        "cultural_self_positioning",
+    ]
+    out = {}
+    for k in SAFE_FIELDS:
+        sv = source_fields.get(k)
+        tv = target_fields.get(k)
+        if (tv is None or str(tv).strip() == "") and (sv is not None and str(sv).strip() != ""):
+            out[k] = sv
+    return out
+
+
 def link_player_by_token(players_table, token, telegram_user_id, telegram_username=None):
-    """Bind an existing 'form-created' player (by link_token) to the real Telegram identity.
+    """Hard rule: 1 telegram_user_id == 1 player record.
+
+    If a form-created record (status=APPLIED) is found by link_token *and* a Telegram record already
+    exists for telegram_user_id, we MERGE the application fields into the existing Telegram record
+    and neutralize the form record (clear link_token), instead of creating duplicates.
+
     Returns:
-      - {ok: True, action: 'linked', record_id: 'rec...'} when linked
+      - {ok: True, action: 'linked', record_id: 'rec...'} when the canonical player record is chosen
       - {ok: True, skipped: True} when no token
       - {ok: False, error: 'link_token_not_found'} if token not found
       - {ok: False, error: 'link_token_already_linked'} if token linked to another tg id
@@ -866,29 +872,65 @@ def link_player_by_token(players_table, token, telegram_user_id, telegram_userna
     if not token:
         return {"ok": True, "skipped": True}
 
+    # 1) Find the form record by token
     formula = f"{{link_token}}='{token}'"
     found = airtable_find_one(players_table, formula)
     if not found.get("ok"):
         return {"ok": False, "error": "link_token_lookup_failed", "details": found}
 
-    rec = found.get("record")
-    if not rec:
+    form_rec = found.get("record")
+    if not form_rec:
         return {"ok": False, "error": "link_token_not_found"}
 
-    fields = (rec.get("fields") or {})
-    existing_tg = str(fields.get("telegram_user_id") or "").strip()
+    form_fields = (form_rec.get("fields") or {})
+    existing_tg_on_form = str(form_fields.get("telegram_user_id") or "").strip()
 
-    if existing_tg and existing_tg != str(telegram_user_id):
-        return {"ok": False, "error": "link_token_already_linked", "record_id": rec.get("id")}
+    # Token already linked to another Telegram id -> conflict
+    if existing_tg_on_form and existing_tg_on_form != str(telegram_user_id):
+        return {"ok": False, "error": "link_token_already_linked", "record_id": form_rec.get("id")}
 
+    # 2) Find the canonical Telegram record by telegram_user_id (if it exists)
+    tg_formula = f"{{telegram_user_id}}='{str(telegram_user_id)}'"
+    tg_found = airtable_find_one(players_table, tg_formula)
+    tg_rec = tg_found.get("record") if tg_found.get("ok") else None
+
+    # 3) If a Telegram record exists and it's different from the form record -> merge INTO Telegram record
+    if tg_rec and tg_rec.get("id") != form_rec.get("id"):
+        tg_fields = (tg_rec.get("fields") or {})
+        upd = _merge_application_fields(form_fields, tg_fields)
+
+        # Always ensure identity fields on canonical record
+        upd["telegram_user_id"] = str(telegram_user_id)
+        if telegram_username:
+            upd["telegram_username"] = str(telegram_username)
+        # Best effort: set ACTIVE if option exists
+        upd["status"] = "ACTIVE"
+        # Keep token for audit (optional)
+        upd["link_token"] = token
+
+        res = airtable_update(players_table, tg_rec["id"], upd)
+        if not res.get("ok"):
+            return {"ok": False, "error": "link_token_merge_update_failed", "details": res}
+
+        # Neutralize form record to prevent reuse and to avoid duplicates (no telegram_user_id set here)
+        try:
+            airtable_update(players_table, form_rec["id"], {"link_token": ""})
+        except Exception:
+            pass
+
+        return {"ok": True, "action": "merged_into_existing", "record_id": tg_rec["id"]}
+
+    # 4) No existing Telegram record -> upgrade the form record into the canonical player
     upd = {"telegram_user_id": str(telegram_user_id), "status": "ACTIVE"}
     if telegram_username:
         upd["telegram_username"] = str(telegram_username)
 
-    res = airtable_update(players_table, rec["id"], upd)
+    res = airtable_update(players_table, form_rec["id"], upd)
     if res.get("ok"):
-        return {"ok": True, "action": "linked", "record_id": rec["id"]}
+        return {"ok": True, "action": "linked", "record_id": form_rec["id"]}
     return {"ok": False, "error": "link_token_update_failed", "details": res}
+
+
 def maybe_update_player_username(players_table, player_record_id, telegram_username):
     """Best-effort: write telegram_username on every interaction (can change).
     Never blocks the ritual flow.
@@ -926,10 +968,6 @@ def ritual_start():
         print("🔵 DEBUG /ritual/start appelé")
 
         payload = _json()
-    try:
-        logger.info("🧪 /ritual/start payload_keys=%s", sorted(list(payload.keys())) if isinstance(payload, dict) else str(type(payload)))
-    except Exception:
-        pass
         telegram_user_id = payload.get("telegram_user_id") or payload.get(
             "user_id") or payload.get("tg_user_id")
         print(f"🔵 telegram_user_id = {telegram_user_id}")
@@ -948,12 +986,6 @@ def ritual_start():
         print(f"🔵 payload complet = {payload}", flush=True)
 
         start_token = (payload.get("link_token") or payload.get("start_param") or payload.get("start") or payload.get("token") or "").strip()
-    try:
-        logger.info("🧪 extracted start_token=%s", start_token)
-        logger.info("🧪 extracted telegram_username=%s", payload.get("telegram_username") or payload.get("telegramUsername"))
-        logger.info("🧪 extracted telegram_user_id=%s", telegram_user_id)
-    except Exception:
-        pass
         p = None
         if start_token:
             bind = link_player_by_token(
@@ -962,7 +994,7 @@ def ritual_start():
                 str(telegram_user_id),
                 payload.get("telegram_username") or payload.get("telegramUsername"),
             )
-            if bind.get("ok") and bind.get("action") == "linked":
+            if bind.get("ok") and bind.get("action") in ("linked", "merged_into_existing"):
                 p = {"ok": True, "action": "linked", "record_id": bind.get("record_id")}
             elif (not bind.get("ok")) and bind.get("error") == "link_token_already_linked":
                 return jsonify({"ok": False, "error": "link_token_already_linked"}), 409
