@@ -17,7 +17,7 @@ import logging
 import threading
 import asyncio
 import time
-from urllib.parse import quote
+import urllib.parse
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
 
@@ -436,6 +436,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     context.user_data["last_start_time"] = now
 
+
+    # ✅ Capture deep-link token (/start <token>) for formulaire ↔ Telegram linking
+    start_token = ""
+    try:
+        if getattr(context, "args", None) and len(context.args) > 0:
+            start_token = str(context.args[0]).strip()
+    except Exception:
+        start_token = ""
+
+    if start_token:
+        context.user_data["link_token"] = start_token
+        logger.info("🔑 START_TOKEN_CAPTURED=%s", start_token)
     joueur_id = str(user.id)
     admin = is_admin(joueur_id)
     context.user_data["exam_mode"] = "Prod"
@@ -445,12 +457,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # ✅ URL WebApp canonique + cache-buster fort
     v = f"{int(time.time())}-{int(time.time_ns() % 1_000_000)}"
-    webapp_url = f"{WEBAPP_BASE_URL}?api={API_BASE_URL}&v={v}&src=start"
-    # ✅ If /start has a link_token (form → Telegram), forward it to the WebApp URL
-    if context.args:
-        _tok = (context.args[0] or "").strip()
-        if _tok:
-            webapp_url += f"&link_token={quote(_tok)}"
+    base_url = f"{WEBAPP_BASE_URL}?api={API_BASE_URL}&v={v}&src=start"
+
+    token = str(context.user_data.get("link_token") or "").strip()
+    if token:
+        base_url = base_url + f"&link_token={urllib.parse.quote_plus(token)}"
+
+    webapp_url = base_url
     logger.info("🔗 WEBAPP_URL_SENT=%s", webapp_url)
 
     # ✅ Purge menu bouton (force Telegram à oublier les anciens liens)
