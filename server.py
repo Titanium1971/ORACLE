@@ -1,4 +1,11 @@
 
+def _norm_tg_username(u: str) -> str:
+    u = (u or "").strip()
+    if u.startswith("@"):
+        u = u[1:]
+    return u.lower().strip()
+
+
 
 def airtable_find_one_sorted(table, formula, sort_field="created_time", sort_direction="desc"):
     """Find one record matching formula, sorted. Requires a sortable field (e.g., created_time if present)."""
@@ -919,6 +926,10 @@ def ritual_start():
         print("🔵 DEBUG /ritual/start appelé")
 
         payload = _json()
+    try:
+        logger.info("🧪 /ritual/start payload_keys=%s", sorted(list(payload.keys())) if isinstance(payload, dict) else str(type(payload)))
+    except Exception:
+        pass
         telegram_user_id = payload.get("telegram_user_id") or payload.get(
             "user_id") or payload.get("tg_user_id")
         print(f"🔵 telegram_user_id = {telegram_user_id}")
@@ -937,6 +948,12 @@ def ritual_start():
         print(f"🔵 payload complet = {payload}", flush=True)
 
         start_token = (payload.get("link_token") or payload.get("start_param") or payload.get("start") or payload.get("token") or "").strip()
+    try:
+        logger.info("🧪 extracted start_token=%s", start_token)
+        logger.info("🧪 extracted telegram_username=%s", payload.get("telegram_username") or payload.get("telegramUsername"))
+        logger.info("🧪 extracted telegram_user_id=%s", telegram_user_id)
+    except Exception:
+        pass
         p = None
         if start_token:
             bind = link_player_by_token(
