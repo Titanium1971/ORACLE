@@ -831,6 +831,43 @@ def upsert_player_by_telegram_user_id(players_table, telegram_user_id):
     return {"ok": False, "error": created}
 
 
+
+
+def link_player_by_token(players_table, token, telegram_user_id, telegram_username=None):
+    """Bind an existing 'form-created' player (by link_token) to the real Telegram identity.
+    Returns:
+      - {ok: True, action: 'linked', record_id: 'rec...'} when linked
+      - {ok: True, skipped: True} when no token
+      - {ok: False, error: 'link_token_not_found'} if token not found
+      - {ok: False, error: 'link_token_already_linked'} if token linked to another tg id
+    """
+    token = (token or "").strip()
+    if not token:
+        return {"ok": True, "skipped": True}
+
+    formula = f"{{link_token}}='{token}'"
+    found = airtable_find_one(players_table, formula)
+    if not found.get("ok"):
+        return {"ok": False, "error": "link_token_lookup_failed", "details": found}
+
+    rec = found.get("record")
+    if not rec:
+        return {"ok": False, "error": "link_token_not_found"}
+
+    fields = (rec.get("fields") or {})
+    existing_tg = str(fields.get("telegram_user_id") or "").strip()
+
+    if existing_tg and existing_tg != str(telegram_user_id):
+        return {"ok": False, "error": "link_token_already_linked", "record_id": rec.get("id")}
+
+    upd = {"telegram_user_id": str(telegram_user_id), "status": "ACTIVE"}
+    if telegram_username:
+        upd["telegram_username"] = str(telegram_username)
+
+    res = airtable_update(players_table, rec["id"], upd)
+    if res.get("ok"):
+        return {"ok": True, "action": "linked", "record_id": rec["id"]}
+    return {"ok": False, "error": "link_token_update_failed", "details": res}
 def maybe_update_player_username(players_table, player_record_id, telegram_username):
     """Best-effort: write telegram_username on every interaction (can change).
     Never blocks the ritual flow.
@@ -860,48 +897,7 @@ def __routes():
 
 
 @app.route("/ritual/start", methods=["POST", "OPTIONS"])
-
-def link_player_by_token(players_table, token, telegram_user_id, telegram_username=None):
-    """Bind an existing 'form-created' player (by link_token) to the real Telegram identity.
-    Avoids duplicates when the form creates a player before Telegram.
-    """
-    token = (token or "").strip()
-    if not token:
-        return {"ok": True, "skipped": True}
-
-    # Exact match first
-    formula = f"{{link_token}}='{token}'"
-    found = airtable_find_one(players_table, formula)
-    if not found.get("ok"):
-        return {"ok": False, "error": "link_token_lookup_failed", "details": found}
-
-    rec = found.get("record")
-    if not rec:
-        # fallback: tolerate stray formatting via SEARCH
-        found2 = airtable_find_one(players_table, f"SEARCH('{token}', {{link_token}})")
-        if found2.get("ok") and found2.get("record"):
-            rec = found2["record"]
-        else:
-            return {"ok": False, "error": "link_token_not_found"}
-
-    fields = (rec.get("fields") or {})
-    existing_tg = str(fields.get("telegram_user_id") or "").strip()
-
-    # Token already bound to another Telegram user -> hard conflict
-    if existing_tg and existing_tg != str(telegram_user_id):
-        return {"ok": False, "error": "link_token_already_linked", "record_id": rec.get("id")}
-
-    upd = {"telegram_user_id": str(telegram_user_id), "status": "ACTIVE"}
-    if telegram_username:
-        upd["telegram_username"] = str(telegram_username)
-
-    res = airtable_update(players_table, str(rec.get("id")), upd)
-    if res.get("ok"):
-        return {"ok": True, "action": "linked", "record_id": str(rec.get("id"))}
-    return {"ok": False, "error": "link_token_update_failed", "details": res}
-
-
-\1):
+def ritual_start():
     if request.method == "OPTIONS":
         return ("", 204)
 
@@ -926,44 +922,32 @@ def link_player_by_token(players_table, token, telegram_user_id, telegram_userna
             flush=True)
         print(f"🔵 payload complet = {payload}", flush=True)
 
+        start_token = (payload.get("link_token") or payload.get("start_param") or payload.get("start") or payload.get("token") or "").strip()
         p = None
-
-# ✅ Optional link_token (form → Telegram) binding to avoid duplicate players
-start_token = (
-    payload.get("link_token")
-    or payload.get("start_param")
-    or payload.get("start")
-    or payload.get("token")
-)
-
-if start_token:
-    bind = link_player_by_token(
-        players_table,
-        start_token,
-        str(telegram_user_id),
-        payload.get("telegram_username") or payload.get("telegramUsername"),
-    )
-    if bind.get("ok") and bind.get("action") == "linked":
-        # Use the linked record as the player record_id
-        p = {"ok": True, "action": "linked", "record_id": bind["record_id"]}
-    elif not bind.get("ok") and bind.get("error") == "link_token_already_linked":
-        return jsonify({"ok": False, "error": "link_token_already_linked"}), 409
-    elif not bind.get("ok") and bind.get("error") != "link_token_not_found":
-        return jsonify({"ok": False, "error": "link_token_bind_failed", "details": bind}), 500
-
-if not p:
-
-        p = upsert_player_by_telegram_user_id(players_table,
-                                              str(telegram_user_id))
-        if not p.get("ok"):
-            return jsonify({
-                "ok": False,
-                "error": "player_upsert_failed",
-                "details": p
-            }), 500
+        if start_token:
+            bind = link_player_by_token(
+                players_table,
+                start_token,
+                str(telegram_user_id),
+                payload.get("telegram_username") or payload.get("telegramUsername"),
+            )
+            if bind.get("ok") and bind.get("action") == "linked":
+                p = {"ok": True, "action": "linked", "record_id": bind.get("record_id")}
+            elif (not bind.get("ok")) and bind.get("error") == "link_token_already_linked":
+                return jsonify({"ok": False, "error": "link_token_already_linked"}), 409
+            # if token not found or lookup failed, we silently fallback to upsert by telegram_user_id
+        
+        if not p:
+            p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
+            if not p.get("ok"):
+                return jsonify({
+                    "ok": False,
+                    "error": "player_upsert_failed",
+                    "details": p
+                }), 500
 
         # ✅ Update telegram_username if provided (can change over time)
-        maybe_update_player_username(players_table, p.get('record_id'), payload.get('telegram_username') or payload.get('telegramUsername'))
+        maybe_update_player_username(players_table, p.get("record_id"), payload.get("telegram_username") or payload.get("telegramUsername"))
 
 
         # ===== Free rituals gate (Formulaire entrants only) =====
@@ -1186,7 +1170,7 @@ def ritual_complete():
         }), 500
 
     # ✅ Update telegram_username if provided (can change over time)
-    maybe_update_player_username(players_table, p.get('record_id'), payload.get('telegram_username') or payload.get('telegramUsername'))
+    maybe_update_player_username(players_table, p.get("record_id"), payload.get("telegram_username") or payload.get("telegramUsername"))
 
     # 1) Log raw payload (always)
     raw_fields = {
