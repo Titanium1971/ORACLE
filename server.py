@@ -931,6 +931,81 @@ def link_player_by_token(players_table, token, telegram_user_id, telegram_userna
     return {"ok": False, "error": "link_token_update_failed", "details": res}
 
 
+def _normalize_telegram_username(u: str) -> str:
+    """Normalize telegram username to maximize matching stability.
+    - removes leading '@'
+    - lowercases
+    - strips whitespace
+    """
+    if u is None:
+        return ""
+    u = str(u).strip()
+    if u.startswith("@"):
+        u = u[1:]
+    u = u.strip().lower()
+    u = re.sub(r"\s+", "", u)
+    return u
+
+
+def link_form_player_by_telegram_username(players_table, telegram_user_id, telegram_username):
+    """Best-effort link:
+    If a player record exists with matching telegram_username but missing telegram_user_id,
+    upgrade it by writing telegram_user_id (and setting status ACTIVE when possible).
+
+    This prevents duplicates when the form creates the player first and Telegram arrives later.
+    """
+    try:
+        uname = _normalize_telegram_username(telegram_username)
+        if not uname:
+            return {"ok": True, "skipped": True, "reason": "missing_username"}
+
+        # Look for a "form" player: same username, no telegram_user_id yet
+        safe_uname = uname.replace("'", "\\'")
+        formula = (
+            "AND("
+            "OR({telegram_user_id}='', {telegram_user_id}=BLANK()),"
+            f"LOWER({{telegram_username}})='{safe_uname}'"
+            ")"
+        )
+        found = airtable_find_one(players_table, formula)
+        rec = found.get("record") if found.get("ok") else None
+        if not rec:
+            return {"ok": True, "skipped": True, "reason": "no_form_match"}
+
+        upd = {
+            "telegram_user_id": str(telegram_user_id),
+            # Keep username normalized to stabilize future matches
+            "telegram_username": uname,
+            # Best effort: set ACTIVE (safe even if field doesn't exist -> will 422 but we don't want to block)
+            "status": "ACTIVE",
+        }
+
+        res = airtable_update(players_table, rec["id"], upd)
+
+        if res.get("ok"):
+            return {"ok": True, "action": "linked_by_username", "record_id": rec["id"]}
+
+        # If "status" field doesn't exist, retry without it (do not block the flow)
+        try:
+            msg = ""
+            if isinstance(res.get("data"), dict):
+                err = res["data"].get("error")
+                if isinstance(err, dict):
+                    msg = str(err.get("message") or "")
+            if "Unknown field name" in msg and "status" in msg:
+                upd.pop("status", None)
+                res2 = airtable_update(players_table, rec["id"], upd)
+                if res2.get("ok"):
+                    return {"ok": True, "action": "linked_by_username", "record_id": rec["id"]}
+                return {"ok": False, "error": "link_by_username_update_failed", "details": res2}
+        except Exception:
+            pass
+
+        return {"ok": False, "error": "link_by_username_update_failed", "details": res}
+    except Exception as e:
+        print("🟠 link_by_username_exception =", repr(e))
+        return {"ok": False, "error": "link_by_username_exception", "details": str(e)}
+
 def maybe_update_player_username(players_table, player_record_id, telegram_username):
     """Best-effort: write telegram_username on every interaction (can change).
     Never blocks the ritual flow.
@@ -1001,6 +1076,15 @@ def ritual_start():
             # if token not found or lookup failed, we silently fallback to upsert by telegram_user_id
         
         if not p:
+            # ✅ Option A: if the player was created by the form first, link it now using telegram_username
+            try:
+                tg_un = payload.get("telegram_username") or payload.get("telegramUsername")
+                link_res = link_form_player_by_telegram_username(players_table, str(telegram_user_id), tg_un)
+                if link_res.get("ok") and link_res.get("action") == "linked_by_username":
+                    p = {"ok": True, "action": "linked_by_username", "record_id": link_res.get("record_id")}
+            except Exception as _e:
+                print("🟠 link_by_username (ritual_start) failed:", repr(_e), flush=True)
+
             p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
             if not p.get("ok"):
                 return jsonify({
@@ -1223,6 +1307,13 @@ def ritual_complete():
     payloads_table = _core_table_name("AIRTABLE_PAYLOADS_TABLE", "rituel_webapp_payloads", "BETA_AIRTABLE_PAYLOADS_TABLE_ID")
     answers_table = _core_table_name("AIRTABLE_ANSWERS_TABLE", "rituel_answers", "BETA_AIRTABLE_ANSWERS_TABLE_ID")
     feedback_table = _core_table_name("AIRTABLE_FEEDBACK_TABLE", "rituel_feedback", "BETA_AIRTABLE_FEEDBACK_TABLE_ID")
+
+    # ✅ Option A safety: if the player was created by the form first, link it now using telegram_username
+    try:
+        tg_un = payload.get("telegram_username") or payload.get("telegramUsername")
+        link_form_player_by_telegram_username(players_table, str(telegram_user_id), tg_un)
+    except Exception as _e:
+        print("🟠 link_by_username (ritual_complete) failed:", repr(_e), flush=True)
 
     p = upsert_player_by_telegram_user_id(players_table, str(telegram_user_id))
     if not p.get("ok"):
