@@ -394,6 +394,10 @@ if (QUESTIONS_API_URL.includes("velvet-mcp-core")) {
 }
 console.log("✅ API BASE =", QUESTIONS_API_URL);
 
+// ✅ Link token (formulaire → Telegram) propagé via l'URL WebApp
+const VO_LINK_TOKEN = (getQueryParam("link_token") || getQueryParam("start_param") || getQueryParam("start") || getQueryParam("token") || "").trim();
+if (VO_LINK_TOKEN) console.log("🔑 link_token détecté (URL)", VO_LINK_TOKEN);
+
 const QUESTIONS_COUNT = 15;
 
 // === Runtime data ===
@@ -440,6 +444,16 @@ function getTelegramUserId(){
   } catch(e){}
   return "";
 }
+
+/** safe: récupère le username Telegram si dispo (peut être vide) */
+function getTelegramUsername(){
+  try {
+    const u = tg?.initDataUnsafe?.user?.username;
+    if (u !== undefined && u !== null && String(u).length > 0) return String(u);
+  } catch(e){}
+  return "";
+}
+
 
 /** attempt_id local fallback (si /ritual/start absent) */
 function generateLocalAttemptId(){
@@ -497,7 +511,11 @@ async function ensureAttemptStarted(){
   const url = `${QUESTIONS_API_URL}/ritual/start`;
   const body = {
     mode: "rituel_full_v1",
-    telegram_user_id: ritualPlayerTelegramUserId || undefined
+    telegram_user_id: ritualPlayerTelegramUserId || undefined,
+    telegram_username: (getTelegramUsername() || undefined),
+    link_token: (VO_LINK_TOKEN || undefined),
+    telegram_username: (getTelegramUsername() || undefined),
+    link_token: (VO_LINK_TOKEN || undefined)
   };
 
   try {
@@ -548,6 +566,8 @@ async function postRitualComplete(payload){
   const body = {
     attempt_id,
     telegram_user_id: ritualPlayerTelegramUserId || undefined,
+    telegram_username: (getTelegramUsername() || undefined),
+    link_token: (VO_LINK_TOKEN || undefined),
     mode: payload?.mode || "rituel_full_v1",
     score_raw: Number.isFinite(Number(payload?.score)) ? Number(payload.score) : undefined,
     score_max: Number.isFinite(Number(payload?.total)) ? Number(payload.total) : undefined,
