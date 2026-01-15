@@ -17,6 +17,7 @@ import logging
 import threading
 import asyncio
 import time
+from urllib.parse import quote
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
 
@@ -445,6 +446,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # ✅ URL WebApp canonique + cache-buster fort
     v = f"{int(time.time())}-{int(time.time_ns() % 1_000_000)}"
     webapp_url = f"{WEBAPP_BASE_URL}?api={API_BASE_URL}&v={v}&src=start"
+    # ✅ If /start has a link_token (form → Telegram), forward it to the WebApp URL
+    if context.args:
+        _tok = (context.args[0] or "").strip()
+        if _tok:
+            webapp_url += f"&link_token={quote(_tok)}"
     logger.info("🔗 WEBAPP_URL_SENT=%s", webapp_url)
 
     # ✅ Purge menu bouton (force Telegram à oublier les anciens liens)
