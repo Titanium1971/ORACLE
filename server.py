@@ -1,3 +1,17 @@
+
+
+def airtable_find_one_sorted(table, formula, sort_field="created_time", sort_direction="desc"):
+    """Find one record matching formula, sorted. Requires a sortable field (e.g., created_time if present)."""
+    params = {"filterByFormula": formula, "maxRecords": 1}
+    # Airtable sorting params: sort[0][field], sort[0][direction]
+    if sort_field:
+        params["sort[0][field]"] = sort_field
+        params["sort[0][direction]"] = sort_direction
+    res = airtable_list_records(table, params=params)
+    if not res.get("ok"):
+        return {"ok": False, "error": "list_failed", "details": res}
+    records = res.get("records") or []
+    return {"ok": True, "record": records[0] if records else None}
 # server.py — Velvet MCP Core (local, propre, souverain)
 # -----------------------------------------------------
 # - /health avec ping Airtable réel
