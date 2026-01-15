@@ -383,7 +383,24 @@ function getQueryParam(name) {
   }
 }
 
+/** ✅ link_token: priorise l'URL (?link_token=...), sinon Telegram initDataUnsafe.start_param */
+function getLinkToken(){
+  const fromUrl = (getQueryParam("link_token") || getQueryParam("start_param") || getQueryParam("start") || getQueryParam("token") || "").trim();
+  if (fromUrl) return fromUrl;
+  try {
+    const sp = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
+    if (sp && String(sp).trim()) return String(sp).trim();
+  } catch(e){}
+  return "";
+}
+
+
 const DEFAULT_API_URL = "https://oracle--velvet-elite.replit.app";
+
+
+// ✅ Link token (formulaire ↔ Telegram)
+const VO_LINK_TOKEN = getLinkToken();
+if (VO_LINK_TOKEN) console.log("🔑 link_token détecté", VO_LINK_TOKEN);
 let QUESTIONS_API_URL = (getQueryParam("api") || DEFAULT_API_URL).replace(/\/+$/, "");
 
 // ✅ Hard override: old/dead backend links (Telegram cache) still pass api=velvet-mcp-core.
@@ -393,10 +410,6 @@ if (QUESTIONS_API_URL.includes("velvet-mcp-core")) {
   QUESTIONS_API_URL = DEFAULT_API_URL;
 }
 console.log("✅ API BASE =", QUESTIONS_API_URL);
-
-// ✅ Link token (formulaire → Telegram) propagé via l'URL WebApp
-const VO_LINK_TOKEN = (getQueryParam("link_token") || getQueryParam("start_param") || getQueryParam("start") || getQueryParam("token") || "").trim();
-if (VO_LINK_TOKEN) console.log("🔑 link_token détecté (URL)", VO_LINK_TOKEN);
 
 const QUESTIONS_COUNT = 15;
 
@@ -448,7 +461,7 @@ function getTelegramUserId(){
 /** safe: récupère le username Telegram si dispo (peut être vide) */
 function getTelegramUsername(){
   try {
-    const u = tg?.initDataUnsafe?.user?.username;
+    const u = window.Telegram?.WebApp?.initDataUnsafe?.user?.username;
     if (u !== undefined && u !== null && String(u).length > 0) return String(u);
   } catch(e){}
   return "";
@@ -512,8 +525,6 @@ async function ensureAttemptStarted(){
   const body = {
     mode: "rituel_full_v1",
     telegram_user_id: ritualPlayerTelegramUserId || undefined,
-    telegram_username: (getTelegramUsername() || undefined),
-    link_token: (VO_LINK_TOKEN || undefined),
     telegram_username: (getTelegramUsername() || undefined),
     link_token: (VO_LINK_TOKEN || undefined)
   };
