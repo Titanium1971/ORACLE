@@ -38,6 +38,15 @@ def _get_questions_table_id() -> str:
     return (QUESTIONS_TABLE_ID or os.getenv("AIRTABLE_TABLE_ID") or "")
 
 
+def _airtable_token() -> str:
+    """Return the Airtable API token/key.
+
+    We standardize on AIRTABLE_API_KEY (which already falls back to AIRTABLE_TOKEN/AIRTABLE_KEY).
+    Some endpoints call this helper for clarity.
+    """
+    return AIRTABLE_API_KEY
+
+
 
 
 app = Flask(__name__, static_folder='webapp', static_url_path='/webapp')
@@ -225,7 +234,7 @@ def _log_incoming_request():
     except Exception:
         pass
 
-APP_VERSION = "v1.4.9-questions-schema-csv-sync-2026-01-16"
+APP_VERSION = "v1.4.10-questions-rand-robust-2026-01-16"
 
 # Airtable single-select choices (players_beta.qualified_via)
 QUALIFIED_VIA_CHOICE_MAP = {
@@ -626,12 +635,39 @@ def questions_random():
             params={"pageSize": max_records},
             timeout=20,
         )
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": "airtable_request_failed",
+            "message": str(e),
+            "version": APP_VERSION,
+        }), 502
+
+    # Airtable should return JSON; if it doesn't, expose a small body snippet for debugging.
+    try:
         data = r.json() if r.content else {}
-        records = data.get("records") if isinstance(data, dict) else None
-        if not isinstance(records, list):
-            records = []
     except Exception:
-        return jsonify({"error": "internal_server_error", "ok": False, "version": APP_VERSION}), 500
+        return jsonify({
+            "ok": False,
+            "error": "airtable_non_json",
+            "status_code": r.status_code,
+            "body": (r.text or "")[:300],
+            "version": APP_VERSION,
+        }), 502
+
+    # If Airtable responds with an error payload, surface it (keeps 500s out of the happy path).
+    if r.status_code >= 400:
+        return jsonify({
+            "ok": False,
+            "error": "airtable_http_error",
+            "status_code": r.status_code,
+            "details": data,
+            "version": APP_VERSION,
+        }), 502
+
+    records = data.get("records") if isinstance(data, dict) else None
+    if not isinstance(records, list):
+        records = []
 
     if not records:
         return jsonify({"ok": True, "questions": []})
