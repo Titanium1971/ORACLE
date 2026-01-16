@@ -659,15 +659,7 @@ async function fetchQuestionsFromAPI(){
     throw new Error("API_MISSING: QUESTIONS_API_URL non défini");
   }
 
-  const tid = getTelegramUserId();
-  const params = new URLSearchParams({
-    count: String(QUESTIONS_COUNT),
-    t: String(Date.now())
-  });
-  if (tid) params.set("telegram_user_id", String(tid));
-  if (ritualAttemptId) params.set("attempt_id", String(ritualAttemptId));
-
-  const url = `${QUESTIONS_API_URL}/questions/random?${params.toString()}`;
+  const url = `${QUESTIONS_API_URL}/questions/random?count=${encodeURIComponent(QUESTIONS_COUNT)}&t=${Date.now()}`;
 
   const initData = tg?.initData || "";
   const headers = { "Accept": "application/json" };
@@ -1437,9 +1429,6 @@ function endRituel(){
     return {
       q: i + 1,
       question_id: a.question_id,
-      question_text: (q && q.question) ? String(q.question) : null,
-      correct_answer_text: (q && Array.isArray(q.options) && correct_index !== null && correct_index >= 0 && correct_index < q.options.length) ? String(q.options[correct_index]) : null,
-
       selected_index,
       selected_letter: a.choice_letter || null, // lettre affichée côté UI (après shuffle)
       correct_index,

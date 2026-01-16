@@ -8,8 +8,6 @@
 import os
 import json
 import random
-import difflib
-import unicodedata
 import re
 from datetime import datetime, timezone, timedelta
 
@@ -203,7 +201,7 @@ def _log_incoming_request():
     except Exception:
         pass
 
-APP_VERSION = "v1.4-anti-repeat-15-2026-01-16"
+APP_VERSION = "v1.3-beta-auto-renew-2026-01-16"
 
 # Airtable single-select choices (players_beta.qualified_via)
 QUALIFIED_VIA_CHOICE_MAP = {
@@ -552,281 +550,638 @@ def health():
 # -----------------------------------------------------
 # Questions — tirage aléatoire + mapping propre
 # -----------------------------------------------------
-@app.route("/questions/random", methods=["GET"])
+@app.route("/questions/random", methods=["GET", "OPTIONS"])
 def questions_random():
-    """Return random questions.
+    # Preflight CORS (au cas où)
+    if request.method == "OPTIONS":
+        return "", 204
 
-    Anti-repetition (BETA only): if telegram_user_id is provided, we try to avoid showing
-    identical/similar questions to the same player during their first 15 completed rituals.
+    try:
+        count = int(request.args.get("count", "15"))
+    except ValueError:
+        count = 15
 
-    Similarity rule (best-effort, lightweight):
-      - block exact repeats by ID_question
-      - block very similar question text
-      - block moderately similar question text when the correct answer text matches
+    count = max(1, min(50, count))
 
-    This is designed to be fail-open: if anything goes wrong, we return questions normally.
-    """
+    api_key = os.getenv("AIRTABLE_API_KEY")
+    base_id = os.getenv("AIRTABLE_BASE_ID")
+    table_id = os.getenv("AIRTABLE_TABLE_ID")
 
-    count = int(request.args.get("count", 15))
-    tid = request.args.get("telegram_user_id") or request.args.get("tid")
+    if not (api_key and base_id and table_id):
+        return jsonify({"error": "missing_env"}), 500
 
-    # -------------------------
-    # Anti-repeat: build history
-    # -------------------------
-    anti_repeat_enabled = True
-    seen_question_ids = set()
-    history_norm = []  # list of (q_norm, a_norm)
+    headers = {"Authorization": f"Bearer {api_key}"}
+    base_url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
 
-    def _norm(s: str) -> str:
-        if not s:
-            return ""
-        s = str(s)
-        s = unicodedata.normalize("NFKD", s)
-        s = "".join(ch for ch in s if not unicodedata.combining(ch))
-        s = s.lower().strip()
-        s = re.sub(r"[^a-z0-9\s]", " ", s)
-        s = re.sub(r"\s+", " ", s).strip()
-        return s
+    threshold = random.randint(0, 999_999)
 
-    def _sim(a: str, b: str) -> float:
-        if not a or not b:
-            return 0.0
-        return difflib.SequenceMatcher(None, a, b).ratio()
-
-    # Only try to anti-repeat when we have a telegram_user_id and we can reach the BETA base.
-    # If not, we keep behavior identical to the previous version.
-    if tid:
-        try:
-            beta_base_id = os.getenv("BETA_AIRTABLE_BASE_ID")
-            beta_players_table = os.getenv("BETA_AIRTABLE_PLAYERS_TABLE_ID")
-            beta_attempts_table = os.getenv("BETA_AIRTABLE_ATTEMPTS_TABLE_ID")
-
-            if beta_base_id and beta_players_table and beta_attempts_table:
-                headers = {
-                    "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-                    "Content-Type": "application/json",
-                }
-
-                # 1) Resolve player record by telegram_user_id
-                players_url = f"https://api.airtable.com/v0/{beta_base_id}/{beta_players_table}"
-                pr = requests.get(
-                    players_url,
-                    headers=headers,
-                    params={
-                        "maxRecords": 1,
-                        "filterByFormula": f'{{telegram_user_id}}="{tid}"',
-                    },
-                    timeout=20,
-                )
-
-                player_rec_id = None
-                if pr.status_code == 200:
-                    recs = pr.json().get("records", [])
-                    if recs:
-                        player_rec_id = recs[0].get("id")
-
-                if player_rec_id:
-                    # 2) Pull up to 15 latest completed attempts for that player
-                    attempts_url = f"https://api.airtable.com/v0/{beta_base_id}/{beta_attempts_table}"
-                    formula = f'FIND("{player_rec_id}", ARRAYJOIN({{player}}))'
-
-                    ar = requests.get(
-                        attempts_url,
-                        headers=headers,
-                        params={
-                            "maxRecords": 15,
-                            "filterByFormula": formula,
-                            "sort[0][field]": "completed_at",
-                            "sort[0][direction]": "desc",
-                        },
-                        timeout=20,
-                    )
-
-                    completed = []
-                    if ar.status_code == 200:
-                        for rec in ar.json().get("records", []):
-                            fields = rec.get("fields", {})
-                            if fields.get("completed_at"):
-                                completed.append(fields)
-
-                    # If the player already completed >= 15 rituals, anti-repeat is disabled (as requested)
-                    if len(completed) >= 15:
-                        anti_repeat_enabled = False
-
-                    # Build seen IDs + optional similarity memory from answers_json
-                    if anti_repeat_enabled:
-                        for fields in completed:
-                            raw = fields.get("answers_json")
-                            if not raw:
-                                continue
-                            try:
-                                parsed = json.loads(raw)
-                            except Exception:
-                                continue
-
-                            # answers_json is usually a list of answer dicts
-                            items = []
-                            if isinstance(parsed, list):
-                                items = parsed
-                            elif isinstance(parsed, dict):
-                                if isinstance(parsed.get("answers"), list):
-                                    items = parsed.get("answers")
-
-                            for a in items:
-                                if not isinstance(a, dict):
-                                    continue
-                                qid = a.get("question_id") or a.get("id")
-                                if qid:
-                                    seen_question_ids.add(str(qid))
-
-                                qt = a.get("question_text") or a.get("question")
-                                ca = a.get("correct_answer_text")
-                                qn = _norm(qt)
-                                an = _norm(ca)
-                                if qn:
-                                    history_norm.append((qn, an))
-
-        except Exception:
-            # fail-open: never block /questions/random because of anti-repeat
-            anti_repeat_enabled = True
-            seen_question_ids = set()
-            history_norm = []
-
-    # -------------------------
-    # Fetch random candidates (same behavior as before)
-    # -------------------------
-    threshold = random.random()
-
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_ID}"
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    # Fetch more than needed, then filter locally (avoids huge Airtable formulas)
-    chunk = max(120, min(240, count * 12))
-
-    params = {
-        "sort[0][field]": "Rand",
-        "sort[0][direction]": "asc",
-        "maxRecords": chunk,
-        "filterByFormula": f"{{Rand}} >= {threshold}",
-    }
-
-    r1 = requests.get(url, headers=headers, params=params, timeout=20)
-    records1 = r1.json().get("records", []) if r1.status_code == 200 else []
-
-    # Wrap around if not enough
-    records2 = []
-    if len(records1) < chunk:
-        params2 = {
+    def fetch_chunk(formula: str):
+        params = {
+            "maxRecords": count,
+            "filterByFormula": formula,
             "sort[0][field]": "Rand",
             "sort[0][direction]": "asc",
-            "maxRecords": (chunk - len(records1)),
-            "filterByFormula": f"{{Rand}} < {threshold}",
         }
-        r2 = requests.get(url, headers=headers, params=params2, timeout=20)
-        records2 = r2.json().get("records", []) if r2.status_code == 200 else []
+        rr = requests.get(base_url, headers=headers, params=params, timeout=10)
+        if rr.status_code != 200:
+            return rr, []
+        return rr, rr.json().get("records", [])
 
-    candidates = records1 + records2
+    r1, recs = fetch_chunk(f"{{Rand}}>={threshold}")
 
-    def _extract_correct_answer(fields: dict) -> str:
-        opts = fields.get("Options")
-        if not opts:
-            return ""
-        try:
-            arr = json.loads(opts) if isinstance(opts, str) else opts
-            if not isinstance(arr, list):
-                return ""
-        except Exception:
-            return ""
-        try:
-            ci = int(fields.get("Correct_index"))
-        except Exception:
-            return ""
-        if 0 <= ci < len(arr):
-            return str(arr[ci])
-        return ""
+    if r1.status_code == 200 and len(recs) < count:
+        r2, recs2 = fetch_chunk(f"{{Rand}}<{threshold}")
+        recs = recs + recs2
 
-    # -------------------------
-    # Local filtering
-    # -------------------------
-    picked = []
-    picked_ids = set()
+    if r1.status_code != 200:
+        return jsonify({
+            "error": "airtable_http_error",
+            "status_code": r1.status_code,
+            "detail": r1.text[:500],
+        }), 502
 
-    for rec in candidates:
-        fields = rec.get("fields", {})
-        qid = fields.get("ID_question")
-        if not qid:
-            continue
-        qid = str(qid)
-
-        # Unique in the returned set
-        if qid in picked_ids:
-            continue
-
-        if anti_repeat_enabled and qid in seen_question_ids:
-            continue
-
-        q_text = fields.get("Question", "")
-        ans_text = _extract_correct_answer(fields)
-        qn = _norm(q_text)
-        an = _norm(ans_text)
-
-        # Similarity filtering only if we have a history of texts
-        if anti_repeat_enabled and history_norm and qn:
-            too_similar = False
-            for (hq, ha) in history_norm:
-                if not hq:
-                    continue
-                s = _sim(qn, hq)
-                if s >= 0.92:
-                    too_similar = True
-                    break
-                if an and ha and an == ha and s >= 0.86:
-                    too_similar = True
-                    break
-            if too_similar:
-                continue
-
-        picked.append(rec)
-        picked_ids.add(qid)
-        if len(picked) >= count:
-            break
-
-    # Fail-open: if we could not pick enough, return unfiltered picks from candidates
-    if len(picked) < count:
-        for rec in candidates:
-            fields = rec.get("fields", {})
-            qid = fields.get("ID_question")
-            if not qid:
-                continue
-            qid = str(qid)
-            if qid in picked_ids:
-                continue
-            picked.append(rec)
-            picked_ids.add(qid)
-            if len(picked) >= count:
-                break
+    records = recs[:count]
 
     mapped = []
-    for rec in picked[:count]:
-        fields = rec.get("fields", {})
-        mapped.append(
-            {
-                "id": fields.get("ID_question") or rec.get("id"),
-                "question": fields.get("Question"),
-                "options": json.loads(fields.get("Options", "[]"))
-                if fields.get("Options")
-                else [],
-                "correct_index": fields.get("Correct_index"),
-                "explanation": fields.get("Explication"),
-                "level": fields.get("Niveau"),
-                "domain": fields.get("Domaine"),
-            }
-        )
+    for rec in records:
+        f = rec.get("fields", {})
 
-    return jsonify({"ok": True, "questions": mapped})
+        raw_opts = f.get("Options (JSON)", "[]")
+        try:
+            opts = json.loads(raw_opts) if isinstance(
+                raw_opts, str) else (raw_opts or [])
+        except Exception:
+            opts = []
+
+        mapped.append({
+            "id": f.get("ID_question"),
+            "question": f.get("Question"),
+            "options": opts,
+            "correct_index": f.get("Correct_index"),
+            "explanation": f.get("Explication"),
+            "domaine": f.get("Domaine"),
+            "niveau": f.get("Niveau"),
+        })
+
+    return jsonify({
+        "count": count,
+        "questions": mapped,
+    }), 200
+
+
+# -----------------------------------------------------
+# Errors
+# -----------------------------------------------------
+@app.errorhandler(404)
+def not_found(_):
+    return jsonify({"error": "not_found"}), 404
+
+
+@app.errorhandler(500)
+def server_error(_):
+    return jsonify({"error": "internal_server_error"}), 500
+
+
+# -----------------------------------------------------
+# Entrypoint local
+# -----------------------------------------------------
+
+# ================================================================
+# Ritual endpoints (WebApp → Airtable)
+# ================================================================
+from flask import abort
+
+
+def _json():
+    try:
+        return request.get_json(force=True, silent=False) or {}
+    except Exception:
+        return {}
+
+
+def _airtable_headers():
+    key = os.getenv("AIRTABLE_API_KEY") or os.getenv("AIRTABLE_KEY")
+    if not key:
+        return None
+    return {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json"
+    }
+
+
+
+def _airtable_base_id(table_name=""):
+    """
+    Routing des bases Airtable.
+
+    - PROD (défaut) : comportement actuel
+      * questions -> AIRTABLE_BASE_ID
+      * core (players/attempts/payloads/answers/feedback) -> AIRTABLE_CORE_BASE_ID (si défini)
+
+    - BETA (ENV=BETA) : tout passe par BETA_AIRTABLE_BASE_ID
+      * questions -> BETA_AIRTABLE_BASE_ID
+      * core -> BETA_AIRTABLE_BASE_ID
+    """
+
+    if APP_ENV == "BETA":
+        return os.getenv("BETA_AIRTABLE_BASE_ID") or os.getenv("AIRTABLE_BASE_ID")
+
+    # === PROD (comportement actuel) ===
+    questions_table = os.getenv("AIRTABLE_TABLE_ID", "")
+
+    core_tables = [
+        "players",
+        "rituel_attempts",
+        "rituel_webapp_payloads",
+        "rituel_answers",
+        "rituel_feedback",
+        os.getenv("AIRTABLE_PLAYERS_TABLE", ""),
+        os.getenv("AIRTABLE_ATTEMPTS_TABLE", ""),
+        os.getenv("AIRTABLE_PAYLOADS_TABLE", ""),
+        os.getenv("AIRTABLE_ANSWERS_TABLE", ""),
+        os.getenv("AIRTABLE_FEEDBACK_TABLE", ""),
+    ]
+
+    if table_name == questions_table:
+        return os.getenv("AIRTABLE_BASE_ID")
+
+    if table_name in core_tables:
+        core_base = os.getenv("AIRTABLE_CORE_BASE_ID")
+        if core_base:
+            return core_base
+
+    return os.getenv("AIRTABLE_BASE_ID")
+
+    # Si c'est une table de joueurs/tentatives -> base CORE
+    if table_name in core_tables:
+        core_base = os.getenv("AIRTABLE_CORE_BASE_ID")
+        if core_base:
+            return core_base
+
+    # Fallback sur base questions (ancien comportement)
+    return os.getenv("AIRTABLE_BASE_ID")
+
+
+def _airtable_url(table):
+    base = _airtable_base_id(table)
+    return f"https://api.airtable.com/v0/{base}/{table}"
+
+
+
+def _core_table_name(prod_env_var: str, default_name: str, beta_env_var: str = "") -> str:
+    """Retourne le nom/ID de table à utiliser selon ENV.
+    - PROD : prod_env_var (si défini) sinon default_name
+    - BETA : beta_env_var (si défini) sinon prod_env_var sinon default_name
+    """
+    if APP_ENV == "BETA":
+        if beta_env_var:
+            v = os.getenv(beta_env_var)
+            if v:
+                return v
+        v2 = os.getenv(prod_env_var)
+        return v2 or default_name
+    v = os.getenv(prod_env_var)
+    return v or default_name
+
+def airtable_create(table, fields):
+    headers = _airtable_headers()
+    base = _airtable_base_id(table)
+    if not headers or not base:
+        return {"ok": False, "error": "missing_airtable_env"}
+    r = requests.post(_airtable_url(table),
+                      headers=headers,
+                      json={"fields": fields},
+                      timeout=20)
+    try:
+        data = r.json()
+    except Exception:
+        data = {"raw": r.text}
+    return {"ok": r.status_code < 300, "status": r.status_code, "data": data}
+
+
+def airtable_find_one(table, formula):
+    headers = _airtable_headers()
+    base = _airtable_base_id(table)
+    if not headers or not base:
+        return {"ok": False, "error": "missing_airtable_env"}
+    r = requests.get(_airtable_url(table),
+                     headers=headers,
+                     params={
+                         "filterByFormula": formula,
+                         "maxRecords": 1
+                     },
+                     timeout=20)
+    data = r.json()
+    recs = data.get("records", []) if isinstance(data, dict) else []
+    return {
+        "ok": r.status_code < 300,
+        "status": r.status_code,
+        "record": (recs[0] if recs else None),
+        "data": data
+    }
+
+
+
+def airtable_find_latest(table, formula, sort_field="started_at"):
+    """Find most recent record matching formula (best effort).
+    Uses Airtable sort query params to pick latest by sort_field desc.
+    """
+    headers = _airtable_headers()
+    base = _airtable_base_id(table)
+    if not headers or not base:
+        return {"ok": False, "error": "missing_airtable_env"}
+    params = {
+        "filterByFormula": formula,
+        "maxRecords": 1,
+        "sort[0][field]": sort_field,
+        "sort[0][direction]": "desc",
+    }
+    r = requests.get(_airtable_url(table), headers=headers, params=params, timeout=20)
+    data = r.json()
+    recs = data.get("records", []) if isinstance(data, dict) else []
+    rec = recs[0] if recs else None
+    return {
+        "ok": r.status_code < 300,
+        "status": r.status_code,
+        "record": rec,
+        "records": recs,
+        "raw": data,
+    }
+
+
+def airtable_list(table, formula, sort_field="completed_at", direction="desc", max_records=10):
+    """List Airtable records matching a formula (best effort).
+
+    Notes:
+    - Uses filterByFormula + sort to fetch a small window of recent records.
+    - Designed for audit/qualification logic (not pagination).
+    """
+    headers = _airtable_headers()
+    base = _airtable_base_id(table)
+    if not headers or not base:
+        return {"ok": False, "error": "missing_airtable_env"}
+
+    params = {
+        "filterByFormula": formula,
+        "maxRecords": int(max_records or 10),
+    }
+    if sort_field:
+        params["sort[0][field]"] = sort_field
+        params["sort[0][direction]"] = (direction or "desc")
+
+    r = requests.get(_airtable_url(table), headers=headers, params=params, timeout=20)
+    try:
+        data = r.json()
+    except Exception:
+        data = {"raw": r.text}
+    recs = data.get("records", []) if isinstance(data, dict) else []
+    return {
+        "ok": r.status_code < 300,
+        "status": r.status_code,
+        "records": recs,
+        "raw": data,
+    }
+
+
+def _safe_int(x, default=None):
+    try:
+        if x is None or x == "":
+            return default
+        return int(float(x))
+    except Exception:
+        return default
+
+
+def _beta_eval_from_attempt_fields(fields: dict):
+    """Extract only what we need for beta qualification from an attempt fields dict."""
+    return {
+        "score_raw": _safe_int(fields.get("score_raw"), None),
+        "score_max": _safe_int(fields.get("score_max"), None),
+        "time_total_seconds": _safe_int(fields.get("time_total_seconds"), None),
+        "is_free": bool(fields.get("is_free")),
+        "completed_at": fields.get("completed_at") or fields.get("started_at"),
+    }
+
+
+def evaluate_beta_qualification(attempts_table: str, telegram_user_id: str, current_attempt: dict = None):
+    """Compute beta qualification (A/B/C) from COMPLETED BETA attempts.
+
+    Rules (locked by user):
+    - All paths are evaluated on FREE attempts only (is_free = true) during the trial phase.
+    - Voie C: any ritual at 15/15 (no time constraint)
+    - Voie B: the 2 BEST free rituals (not the last 2), each >=12/15 AND <= 6 minutes
+    - Voie A: the 3 free rituals, average >=8/15 AND each < 7 minutes
+    """
+    tid = str(telegram_user_id)
+    safe_tid = tid.replace('"', '\\"')
+
+    # player is a link field -> it exposes the linked record's primary field value (telegram_user_id)
+    # NOTE: Airtable formula fields must use single braces: {env}, {status}, {is_free}.
+    # Using double braces would make the formula invalid and return no records.
+    formula = (
+        'AND('
+        f'FIND("{safe_tid}", ARRAYJOIN({{player}})), '
+        '{env}="BETA", '
+        '{status}="COMPLETED", '
+        '{is_free}=TRUE()'
+        ')'
+    )
+
+    res = airtable_list(attempts_table, formula, sort_field="completed_at", direction="desc", max_records=10)
+    recs = res.get("records", []) if res.get("ok") else []
+
+    attempts = []
+    seen_ids = set()
+    for rec in recs:
+        rid = rec.get("id")
+        if rid:
+            seen_ids.add(rid)
+        fields = rec.get("fields") or {}
+        attempts.append(_beta_eval_from_attempt_fields(fields))
+
+    # Ensure current attempt is considered even if Airtable hasn't surfaced it yet.
+    if isinstance(current_attempt, dict):
+        cur_id = current_attempt.get("id")
+        cur_fields = current_attempt.get("fields") or {}
+        # Only consider it for qualification if it's a FREE attempt.
+        if bool(cur_fields.get("is_free")):
+            if cur_id and cur_id not in seen_ids:
+                attempts.insert(0, _beta_eval_from_attempt_fields(cur_fields))
+            elif not cur_id:
+                attempts.insert(0, _beta_eval_from_attempt_fields(cur_fields))
+
+    def _score(a):
+        return a.get("score_raw") if a else None
+
+    def _time(a):
+        return a.get("time_total_seconds") if a else None
+
+    # Safety: we only evaluate FREE attempts.
+    attempts = [a for a in attempts if a.get("is_free")]
+
+    # --- Voie C ---
+    for a in attempts:
+        if _score(a) == 15:
+            return {"qualified": True, "via": "C"}
+
+    # --- Voie B (2 meilleurs rituels gratuits) ---
+    # Filter by time constraint first, then rank by score desc, time asc.
+    b_candidates = [a for a in attempts if _time(a) is not None and _time(a) <= 360 and _score(a) is not None]
+    b_candidates.sort(key=lambda x: (-_score(x), _time(x)))
+    best2 = b_candidates[:2]
+    if len(best2) == 2 and all((_score(a) >= 12) for a in best2):
+        return {"qualified": True, "via": "B"}
+
+    # --- Voie A ---
+    last3 = attempts[:3]
+    if len(last3) == 3:
+        scores = [s for s in (_score(x) for x in last3) if s is not None]
+        if len(scores) == 3:
+            avg = sum(scores) / 3.0
+            ok_time = all((_time(x) is not None and _time(x) < 420) for x in last3)
+            if ok_time and avg >= 8.0:
+                return {"qualified": True, "via": "A"}
+
+    return {"qualified": False, "via": None}
+
+
+def airtable_update(table, record_id, fields):
+    headers = _airtable_headers()
+    base = _airtable_base_id(table)
+    if not headers or not base:
+        return {"ok": False, "error": "missing_airtable_env"}
+    r = requests.patch(_airtable_url(table) + f"/{record_id}",
+                       headers=headers,
+                       json={"fields": fields},
+                       timeout=20)
+    data = r.json()
+    return {"ok": r.status_code < 300, "status": r.status_code, "data": data}
+
+
+def upsert_player_by_telegram_user_id(players_table, telegram_user_id):
+    # players.telegram_user_id is the upsert key (locked mapping)
+    formula = f"{{telegram_user_id}}='{telegram_user_id}'"
+    found = airtable_find_one(players_table, formula)
+    if found.get("ok") and found.get("record"):
+        return {
+            "ok": True,
+            "action": "found",
+            "record_id": found["record"]["id"]
+        }
+    # create minimal
+    created = airtable_create(players_table,
+                              {"telegram_user_id": str(telegram_user_id)})
+    if created.get("ok"):
+        return {
+            "ok": True,
+            "action": "created",
+            "record_id": created["data"]["id"]
+        }
+    return {"ok": False, "error": created}
+
+
+
+
+def _merge_application_fields(source_fields: dict, target_fields: dict) -> dict:
+    """Copy only safe 'application' fields from the form record into the target player.
+    Never overwrites non-empty target fields.
+    """
+    SAFE_FIELDS = [
+        "email",
+        "first_name",
+        "last_name",
+        "phone",
+        "motivation_text",
+        "entry_channel",
+        "cultural_self_positioning",
+    ]
+    out = {}
+    for k in SAFE_FIELDS:
+        sv = source_fields.get(k)
+        tv = target_fields.get(k)
+        if (tv is None or str(tv).strip() == "") and (sv is not None and str(sv).strip() != ""):
+            out[k] = sv
+    return out
+
+
+def link_player_by_token(players_table, token, telegram_user_id, telegram_username=None):
+    """Hard rule: 1 telegram_user_id == 1 player record.
+
+    If a form-created record (status=APPLIED) is found by link_token *and* a Telegram record already
+    exists for telegram_user_id, we MERGE the application fields into the existing Telegram record
+    and neutralize the form record (clear link_token), instead of creating duplicates.
+
+    Returns:
+      - {ok: True, action: 'linked', record_id: 'rec...'} when the canonical player record is chosen
+      - {ok: True, skipped: True} when no token
+      - {ok: False, error: 'link_token_not_found'} if token not found
+      - {ok: False, error: 'link_token_already_linked'} if token linked to another tg id
+    """
+    token = (token or "").strip()
+    if not token:
+        return {"ok": True, "skipped": True}
+
+    # 1) Find the form record by token
+    formula = f"{{link_token}}='{token}'"
+    found = airtable_find_one(players_table, formula)
+    if not found.get("ok"):
+        return {"ok": False, "error": "link_token_lookup_failed", "details": found}
+
+    form_rec = found.get("record")
+    if not form_rec:
+        return {"ok": False, "error": "link_token_not_found"}
+
+    form_fields = (form_rec.get("fields") or {})
+    existing_tg_on_form = str(form_fields.get("telegram_user_id") or "").strip()
+
+    # Token already linked to another Telegram id -> conflict
+    if existing_tg_on_form and existing_tg_on_form != str(telegram_user_id):
+        return {"ok": False, "error": "link_token_already_linked", "record_id": form_rec.get("id")}
+
+    # 2) Find the canonical Telegram record by telegram_user_id (if it exists)
+    tg_formula = f"{{telegram_user_id}}='{str(telegram_user_id)}'"
+    tg_found = airtable_find_one(players_table, tg_formula)
+    tg_rec = tg_found.get("record") if tg_found.get("ok") else None
+
+    # 3) If a Telegram record exists and it's different from the form record -> merge INTO Telegram record
+    if tg_rec and tg_rec.get("id") != form_rec.get("id"):
+        tg_fields = (tg_rec.get("fields") or {})
+        upd = _merge_application_fields(form_fields, tg_fields)
+
+        # Always ensure identity fields on canonical record
+        upd["telegram_user_id"] = str(telegram_user_id)
+        if telegram_username:
+            upd["telegram_username"] = str(telegram_username)
+        # Best effort: set ACTIVE if option exists
+        upd["status"] = "ACTIVE"
+        # Keep token for audit (optional)
+        upd["link_token"] = token
+
+        res = airtable_update(players_table, tg_rec["id"], upd)
+        if not res.get("ok"):
+            return {"ok": False, "error": "link_token_merge_update_failed", "details": res}
+
+        # Neutralize form record to prevent reuse and to avoid duplicates (no telegram_user_id set here)
+        try:
+            airtable_update(players_table, form_rec["id"], {"link_token": ""})
+        except Exception:
+            pass
+
+        return {"ok": True, "action": "merged_into_existing", "record_id": tg_rec["id"]}
+
+    # 4) No existing Telegram record -> upgrade the form record into the canonical player
+    upd = {"telegram_user_id": str(telegram_user_id), "status": "ACTIVE"}
+    if telegram_username:
+        upd["telegram_username"] = str(telegram_username)
+
+    res = airtable_update(players_table, form_rec["id"], upd)
+    if res.get("ok"):
+        return {"ok": True, "action": "linked", "record_id": form_rec["id"]}
+    return {"ok": False, "error": "link_token_update_failed", "details": res}
+
+
+def _normalize_telegram_username(u: str) -> str:
+    """Normalize telegram username to maximize matching stability.
+    - removes leading '@'
+    - lowercases
+    - strips whitespace
+    """
+    if u is None:
+        return ""
+    u = str(u).strip()
+    if u.startswith("@"):
+        u = u[1:]
+    u = u.strip().lower()
+    u = re.sub(r"\s+", "", u)
+    return u
+
+
+def link_form_player_by_telegram_username(players_table, telegram_user_id, telegram_username):
+    """Best-effort link:
+    If a player record exists with matching telegram_username but missing telegram_user_id,
+    upgrade it by writing telegram_user_id (and setting status ACTIVE when possible).
+
+    This prevents duplicates when the form creates the player first and Telegram arrives later.
+    """
+    try:
+        uname = _normalize_telegram_username(telegram_username)
+        if not uname:
+            return {"ok": True, "skipped": True, "reason": "missing_username"}
+
+        # Look for a "form" player: same username, no telegram_user_id yet
+        safe_uname = uname.replace("'", "\\'")
+        formula = (
+            "AND("
+            "OR({telegram_user_id}='', {telegram_user_id}=BLANK()),"
+            f"LOWER({{telegram_username}})='{safe_uname}'"
+            ")"
+        )
+        found = airtable_find_one(players_table, formula)
+        rec = found.get("record") if found.get("ok") else None
+        if not rec:
+            return {"ok": True, "skipped": True, "reason": "no_form_match"}
+
+        upd = {
+            "telegram_user_id": str(telegram_user_id),
+            # Keep username normalized to stabilize future matches
+            "telegram_username": uname,
+            # Best effort: set ACTIVE (safe even if field doesn't exist -> will 422 but we don't want to block)
+            "status": "ACTIVE",
+        }
+
+        res = airtable_update(players_table, rec["id"], upd)
+
+        if res.get("ok"):
+            return {"ok": True, "action": "linked_by_username", "record_id": rec["id"]}
+
+        # If "status" field doesn't exist, retry without it (do not block the flow)
+        try:
+            msg = ""
+            if isinstance(res.get("data"), dict):
+                err = res["data"].get("error")
+                if isinstance(err, dict):
+                    msg = str(err.get("message") or "")
+            if "Unknown field name" in msg and "status" in msg:
+                upd.pop("status", None)
+                res2 = airtable_update(players_table, rec["id"], upd)
+                if res2.get("ok"):
+                    return {"ok": True, "action": "linked_by_username", "record_id": rec["id"]}
+                return {"ok": False, "error": "link_by_username_update_failed", "details": res2}
+        except Exception:
+            pass
+
+        return {"ok": False, "error": "link_by_username_update_failed", "details": res}
+    except Exception as e:
+        print("🟠 link_by_username_exception =", repr(e))
+        return {"ok": False, "error": "link_by_username_exception", "details": str(e)}
+
+def maybe_update_player_username(players_table, player_record_id, telegram_username):
+    """Best-effort: write telegram_username on every interaction (can change).
+    Never blocks the ritual flow.
+    """
+    try:
+        if not telegram_username:
+            return {"ok": True, "skipped": True}
+        fields = {"telegram_username": str(telegram_username)}
+        res = airtable_update(players_table, str(player_record_id), fields)
+        if not res.get("ok"):
+            print("🟠 username_update_failed =", res)
+        else:
+            print("🟢 username_updated =", telegram_username)
+        return res
+    except Exception as e:
+        print("🟠 username_update_exception =", repr(e))
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/__routes")
+def __routes():
+    return jsonify({
+        "ok": True,
+        "version": APP_VERSION,
+        "routes": sorted([str(r) for r in app.url_map.iter_rules()])
+    })
+
 
 @app.route("/ritual/start", methods=["POST", "OPTIONS"])
 def ritual_start():
