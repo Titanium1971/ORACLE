@@ -201,7 +201,7 @@ def _log_incoming_request():
     except Exception:
         pass
 
-APP_VERSION = "v1.4.2-anti-repeat-15-fix-2026-01-16"
+APP_VERSION = "v1.4.4-questions-jsonguard-2026-01-16"
 
 # Airtable single-select choices (players_beta.qualified_via)
 QUALIFIED_VIA_CHOICE_MAP = {
@@ -591,6 +591,13 @@ def questions_random():
             return 0.0
         return difflib.SequenceMatcher(None, a, b).ratio()
 
+    def _safe_resp_json(resp):
+        """Fail-open JSON decode for Airtable responses (avoid 500 on non-JSON bodies)."""
+        try:
+            return resp.json() if resp is not None else {}
+        except Exception:
+            return {}
+
     # Only try to anti-repeat when we have a telegram_user_id and we can reach the BETA base.
     # If not, we keep behavior identical to the previous version.
     if tid:
@@ -619,7 +626,7 @@ def questions_random():
 
                 player_rec_id = None
                 if pr.status_code == 200:
-                    recs = pr.json().get("records", [])
+                    recs = _safe_resp_json(pr).get("records", [])
                     if recs:
                         player_rec_id = recs[0].get("id")
 
@@ -642,7 +649,7 @@ def questions_random():
 
                     completed = []
                     if ar.status_code == 200:
-                        for rec in ar.json().get("records", []):
+                        for rec in _safe_resp_json(ar).get("records", []):
                             fields = rec.get("fields", {})
                             if fields.get("completed_at"):
                                 completed.append(fields)
@@ -695,7 +702,7 @@ def questions_random():
     # -------------------------
     threshold = random.random()
 
-    url = f"https://api.airtable.com/v0/{os.getenv('AIRTABLE_BASE_ID','')}/{os.getenv('AIRTABLE_TABLE_ID','')}"
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_ID}"
     headers = {
         "Authorization": f"Bearer {AIRTABLE_API_KEY}",
         "Content-Type": "application/json",
@@ -712,7 +719,7 @@ def questions_random():
     }
 
     r1 = requests.get(url, headers=headers, params=params, timeout=20)
-    records1 = r1.json().get("records", []) if r1.status_code == 200 else []
+    records1 = _safe_resp_json(r1).get("records", []) if r1.status_code == 200 else []
 
     # Wrap around if not enough
     records2 = []
@@ -724,7 +731,7 @@ def questions_random():
             "filterByFormula": f"{{Rand}} < {threshold}",
         }
         r2 = requests.get(url, headers=headers, params=params2, timeout=20)
-        records2 = r2.json().get("records", []) if r2.status_code == 200 else []
+        records2 = _safe_resp_json(r2).get("records", []) if r2.status_code == 200 else []
 
     candidates = records1 + records2
 
@@ -807,6 +814,15 @@ def questions_random():
             if len(picked) >= count:
                 break
 
+    def _safe_json_list(s):
+        if not s:
+            return []
+        try:
+            v = json.loads(s)
+            return v if isinstance(v, list) else []
+        except Exception:
+            return []
+
     mapped = []
     for rec in picked[:count]:
         fields = rec.get("fields", {})
@@ -814,9 +830,7 @@ def questions_random():
             {
                 "id": fields.get("ID_question") or rec.get("id"),
                 "question": fields.get("Question"),
-                "options": json.loads(fields.get("Options", "[]"))
-                if fields.get("Options")
-                else [],
+                "options": _safe_json_list(fields.get("Options")),
                 "correct_index": fields.get("Correct_index"),
                 "explanation": fields.get("Explication"),
                 "level": fields.get("Niveau"),
