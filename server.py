@@ -9,7 +9,7 @@ import os
 import json
 import random
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import requests
 from flask import Flask, jsonify, request, send_from_directory
@@ -201,7 +201,7 @@ def _log_incoming_request():
     except Exception:
         pass
 
-APP_VERSION = "v1.0-beta-qualification-fix-2026-01-16"
+APP_VERSION = "v1.1-beta-qualification-hotfix-2026-01-16"
 
 # ============================================================================
 #  NOTION CONFIGURATION (for ritual/complete endpoint)
@@ -863,11 +863,13 @@ def evaluate_beta_qualification(attempts_table: str, telegram_user_id: str, curr
     safe_tid = tid.replace('"', '\\"')
 
     # player is a link field -> it exposes the linked record's primary field value (telegram_user_id)
+    # NOTE: Airtable formula fields must use single braces: {env}, {status}, {is_free}.
+    # Using double braces would make the formula invalid and return no records.
     formula = (
         'AND('
         f'FIND("{safe_tid}", ARRAYJOIN({{player}})), '
-        '{{env}}="BETA", '
-        '{{status}}="COMPLETED", '
+        '{env}="BETA", '
+        '{status}="COMPLETED", '
         '{is_free}=TRUE()'
         ')'
     )
@@ -1483,7 +1485,7 @@ def ritual_complete():
             # Pick the most recent non-completed attempt for this player in BETA.
             formula_parts = [
                 f'{{player}}="{telegram_user_id}"',
-                '{{env}}="BETA"',
+                '{env}="BETA"',
                 'OR({completed_at}="", {completed_at}=BLANK())'.replace("{completed_at}", "{completed_at}"),
             ]
             if payload.get("attempt_label"):
@@ -1761,6 +1763,11 @@ def ritual_complete():
                 break
 
         # ===== BETA qualification (Option A/B/C) =====
+        # Extract key metrics from the just-completed attempt update.
+        # This avoids NameError bugs and ensures qualification evaluates the current ritual.
+        score_raw = _safe_int((upd.get("score_raw") if 'upd' in locals() else payload.get("score_raw") or payload.get("score")), None)
+        score_max = _safe_int((upd.get("score_max") if 'upd' in locals() else payload.get("score_max") or payload.get("total") or 15), 15)
+        time_total_seconds = _safe_int((upd.get("time_total_seconds") if 'upd' in locals() else payload.get("time_total_seconds") or payload.get("time_spent_seconds")), None)
         beta_qualification = {"qualified": False, "via": None}
         beta_player_update_ok = None
         beta_player_update = None
