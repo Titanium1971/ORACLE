@@ -452,6 +452,12 @@ let voNoFreeRituals = false; // ✅ bloque l'expérience si quota gratuit épuis
 /** safe: récupère l'user id Telegram si dispo */
 function getTelegramUserId(){
   try {
+    const sp = new URLSearchParams(window.location.search || '');
+    const override = sp.get('tid');
+    if (override && String(override).trim().length) return String(override).trim();
+  } catch(e){}
+
+  try {
     const id = tg?.initDataUnsafe?.user?.id;
     if (id !== undefined && id !== null && String(id).length > 0) return String(id);
   } catch(e){}
