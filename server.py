@@ -1140,16 +1140,13 @@ def ritual_start():
                 "idempotent": True
             }), 200
 
-        status_business = str(player_fields.get("status") or "").strip()
         beta_gate_status = str(player_fields.get("beta_gate_status") or "").strip()
         beta_access_until_raw = player_fields.get("beta_access_until")
         beta_until_dt = _parse_iso(beta_access_until_raw)
         now_dt = datetime.now(timezone.utc)
 
-        is_beta_active = False
-        if beta_until_dt and beta_until_dt > now_dt:
-            if beta_gate_status == "ACTIVE":
-                is_beta_active = True
+        # STRICT rule: beta active ONLY if beta_gate_status=ACTIVE AND beta_access_until is in the future.
+        is_beta_active = bool(beta_until_dt and beta_until_dt > now_dt and beta_gate_status == "ACTIVE")
 
         if not is_beta_active:
             apply_free_gate = True
