@@ -1097,24 +1097,26 @@ def ritual_start():
         maybe_update_player_username(players_table, p.get("record_id"), payload.get("telegram_username") or payload.get("telegramUsername"))
 
 
-        # ===== Free rituals gate (Formulaire entrants only) =====
+
+
+        # ===== Access gate (Option B) =====
+        # Source of truth: beta_gate_status + beta_access_until (ACTIVE window),
+        # else free_rituals_remaining (trial), else blocked.
         apply_free_gate = False
         remaining = 0
         used = 0
         active_attempt = ""
-        entry_channel = ""
+
         try:
             _f = f"{{telegram_user_id}}='{str(telegram_user_id)}'"
             found_player = airtable_find_one(players_table, _f)
             player_record = found_player.get("record") if found_player.get("ok") else None
         except Exception as _e:
             player_record = None
-            print("🔴 free_rituals: failed to fetch player record:", repr(_e), flush=True)
+            print("🔴 access_gate: failed to fetch player record:", repr(_e), flush=True)
 
         player_fields = (player_record or {}).get("fields") or {}
-        entry_channel = str(player_fields.get("entry_channel") or "").strip()
-        created_raw = player_fields.get("created_at") or (player_record or {}).get("createdTime")
-        cutoff_raw = os.getenv("FREE_RITUALS_FORM_CUTOFF_ISO", "2026-01-14T00:00:00+00:00")
+        active_attempt = str(player_fields.get("active_attempt_label") or "").strip()
 
         def _parse_iso(_s):
             if not _s:
@@ -1127,18 +1129,34 @@ def ritual_start():
             except Exception:
                 return None
 
-        created_dt = _parse_iso(created_raw)
-        cutoff_dt = _parse_iso(cutoff_raw)
-        is_form_entry = entry_channel == "Formulaire"
-        is_new_form_entry = is_form_entry and (created_dt is None or cutoff_dt is None or created_dt >= cutoff_dt)
-        apply_free_gate = bool(is_new_form_entry)
+        # Idempotence / active lock: if an attempt is already active, return it
+        if active_attempt:
+            print(f"🟠 access_gate: active_attempt_label present → idempotent return {active_attempt}", flush=True)
+            return jsonify({
+                "ok": True,
+                "version": APP_VERSION,
+                "attempt_id": active_attempt,
+                "player_record_id": p["record_id"],
+                "idempotent": True
+            }), 200
 
-        if apply_free_gate:
+        status_business = str(player_fields.get("status") or "").strip()
+        beta_gate_status = str(player_fields.get("beta_gate_status") or "").strip()
+        beta_access_until_raw = player_fields.get("beta_access_until")
+        beta_until_dt = _parse_iso(beta_access_until_raw)
+        now_dt = datetime.now(timezone.utc)
+
+        is_beta_active = False
+        if beta_until_dt and beta_until_dt > now_dt:
+            if beta_gate_status == "ACTIVE":
+                is_beta_active = True
+
+        if not is_beta_active:
+            apply_free_gate = True
             remaining = int(player_fields.get("free_rituals_remaining") or 0)
             used = int(player_fields.get("free_rituals_used") or 0)
-            active_attempt = str(player_fields.get("active_attempt_label") or "").strip()
 
-            # Backfill defaults for first-time Formulaire players missing new fields
+            # Backfill defaults for first-time players missing new fields
             backfill = {}
             if "free_rituals_remaining" not in player_fields:
                 remaining = 3
@@ -1153,27 +1171,17 @@ def ritual_start():
                 try:
                     airtable_update(players_table, p["record_id"], backfill)
                 except Exception as _e:
-                    print("🔴 free_rituals: backfill update failed:", repr(_e), flush=True)
-
-            # Idempotence / active lock: if an attempt is already active, return it
-            if active_attempt:
-                print(f"🟠 free_rituals: active_attempt_label present → idempotent return {active_attempt}", flush=True)
-                return jsonify({
-                    "ok": True,
-                    "version": APP_VERSION,
-                    "attempt_id": active_attempt,
-                    "player_record_id": p["record_id"],
-                    "idempotent": True
-                }), 200
+                    print("🔴 access_gate: backfill update failed:", repr(_e), flush=True)
 
             # No free rituals remaining → block start
             if remaining <= 0:
-                print("🟠 free_rituals: remaining<=0 → blocked", flush=True)
+                print("🟠 access_gate: remaining<=0 → blocked", flush=True)
                 return jsonify({
                     "ok": False,
                     "error": "no_free_rituals",
                     "player_record_id": p["record_id"]
                 }), 403
+
         # Translate mode for Airtable (app.js sends "rituel_full_v1" but Airtable expects "PROD" or "TEST")
         raw_mode = payload.get("mode") or payload.get("env") or "BETA"
         if raw_mode in ("rituel_full_v1", "ritual_full_v1", "rituel_v1",
@@ -1198,6 +1206,9 @@ def ritual_start():
             # Human-readable label for debugging (safe if field exists)
             "attempt_label": payload.get("attempt_label") or datetime.now(timezone.utc).strftime("RIT-%Y%m%d-%H%M%S"),
         }
+        if apply_free_gate:
+            fields["is_free"] = True
+
         # optional text mirror if you have one; safe to ignore if field absent
         if payload.get("Players"):
             fields["Players"] = payload.get("Players")
@@ -1238,19 +1249,20 @@ def ritual_start():
             }), 500
 
 
-        # ===== Consume free ritual + set active lock (Formulaire entrants only) =====
-        if apply_free_gate:
-            try:
-                upd_fields = {
+        # ===== Set active lock + (optional) consume free ritual =====
+        try:
+            upd_fields = {"active_attempt_label": created["data"]["id"]}
+            if apply_free_gate:
+                upd_fields.update({
                     "free_rituals_remaining": max(0, remaining - 1),
                     "free_rituals_used": used + 1,
-                    "active_attempt_label": created["data"]["id"],
-                }
-                upd = airtable_update(players_table, p["record_id"], upd_fields)
-                if not upd.get("ok"):
-                    print("🔴 free_rituals: failed to update player counters/lock:", upd, flush=True)
-            except Exception as _e:
-                print("🔴 free_rituals: exception while updating counters/lock:", repr(_e), flush=True)
+                })
+            upd = airtable_update(players_table, p["record_id"], upd_fields)
+            if not upd.get("ok"):
+                print("🔴 access_gate: failed to update player lock/counters:", upd, flush=True)
+        except Exception as _e:
+            print("🔴 access_gate: exception while updating lock/counters:", repr(_e), flush=True)
+
         return jsonify({
             "ok": True,
             "version": APP_VERSION,
@@ -1671,35 +1683,11 @@ def ritual_complete():
         print(f"❌ NOTION WRITE EXCEPTION: {e}")
 
 
-    # ===== Clear active lock (Formulaire entrants only; best effort) =====
+    # ===== Clear active lock (best effort; all players) =====
     try:
-        _f = f"{{telegram_user_id}}='{str(telegram_user_id)}'"
-        found_player = airtable_find_one(players_table, _f)
-        player_record = found_player.get("record") if found_player.get("ok") else None
-        player_fields = (player_record or {}).get("fields") or {}
-        entry_channel = str(player_fields.get("entry_channel") or "").strip()
-        created_raw = player_fields.get("created_at") or (player_record or {}).get("createdTime")
-        cutoff_raw = os.getenv("FREE_RITUALS_FORM_CUTOFF_ISO", "2026-01-14T00:00:00+00:00")
-
-        def _parse_iso(_s):
-            if not _s:
-                return None
-            try:
-                _s = str(_s)
-                if _s.endswith("Z"):
-                    _s = _s[:-1] + "+00:00"
-                return datetime.fromisoformat(_s)
-            except Exception:
-                return None
-
-        created_dt = _parse_iso(created_raw)
-        cutoff_dt = _parse_iso(cutoff_raw)
-        is_form_entry = entry_channel == "Formulaire"
-        is_new_form_entry = is_form_entry and (created_dt is None or cutoff_dt is None or created_dt >= cutoff_dt)
-        if is_new_form_entry:
-            airtable_update(players_table, p["record_id"], {"active_attempt_label": ""})
+        airtable_update(players_table, p["record_id"], {"active_attempt_label": ""})
     except Exception as _e:
-        print("🔴 free_rituals: clear lock failed:", repr(_e), flush=True)
+        print("🔴 access_gate: clear lock failed:", repr(_e), flush=True)
     return jsonify({
         "ok":
         True,
