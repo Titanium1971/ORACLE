@@ -201,7 +201,20 @@ def _log_incoming_request():
     except Exception:
         pass
 
-APP_VERSION = "v1.1-beta-qualification-hotfix-2026-01-16"
+APP_VERSION = "v1.2-beta-qualifiedvia-map-2026-01-16"
+
+# Airtable single-select choices (players_beta.qualified_via)
+QUALIFIED_VIA_CHOICE_MAP = {
+    "A": "Régularité Velvet (3 rituels)",
+    "B": "Excellence Accélérée (2 rituels)",
+    "C": "Rituel Parfait (15/15)",
+}
+
+def _map_qualified_via_choice(via_code: str) -> str:
+    """Map internal A/B/C codes to Airtable single-select choice names."""
+    v = (via_code or "").strip().upper()
+    return QUALIFIED_VIA_CHOICE_MAP.get(v, (via_code or ""))
+
 
 # ============================================================================
 #  NOTION CONFIGURATION (for ritual/complete endpoint)
@@ -1855,7 +1868,7 @@ def ritual_complete():
                                 "beta_gate_status": "ACTIVE",
                                 "beta_access_until": new_until.isoformat(),
                                 "beta_cycles_used": cycles_used,
-                                "qualified_via": str(beta_qualification.get("via") or ""),
+                                "qualified_via": _map_qualified_via_choice(beta_qualification.get("via")),
                                 "beta_decision_at": now_utc.isoformat(),
                             }
 
