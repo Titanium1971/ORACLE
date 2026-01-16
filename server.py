@@ -16,39 +16,6 @@ from flask import Flask, jsonify, request, send_from_directory
 
 APP_ENV = "BETA"  # forced: Airtable env field only supports BETA
 
-# Airtable env (globals)
-AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY") or os.getenv("AIRTABLE_TOKEN") or os.getenv("AIRTABLE_KEY") or ""
-AIRTABLE_BASE_ID = (os.getenv("BETA_AIRTABLE_BASE_ID") or os.getenv("AIRTABLE_BASE_ID") or "") if APP_ENV == "BETA" else (os.getenv("AIRTABLE_BASE_ID") or "")
-AIRTABLE_TABLE_ID = os.getenv("AIRTABLE_TABLE_ID") or os.getenv("QUESTIONS_TABLE_ID") or ""
-
-# --- Questions source (may differ from core beta tables) ---
-# If your Questions table lives in a different base than the BETA core tables,
-# set these env vars in Replit Secrets:
-# - QUESTIONS_AIRTABLE_BASE_ID (recommended)
-# - QUESTIONS_TABLE_ID (optional; defaults to AIRTABLE_TABLE_ID)
-QUESTIONS_AIRTABLE_BASE_ID = os.getenv("QUESTIONS_AIRTABLE_BASE_ID", "")
-QUESTIONS_TABLE_ID = os.getenv("QUESTIONS_TABLE_ID", "")
-
-def _get_questions_base_id() -> str:
-    # Prefer explicit questions base; otherwise fall back to the main base id.
-    # (Do NOT force BETA base here, because table IDs are base-scoped.)
-    return (QUESTIONS_AIRTABLE_BASE_ID or os.getenv("AIRTABLE_BASE_ID") or "")
-
-def _get_questions_table_id() -> str:
-    return (QUESTIONS_TABLE_ID or os.getenv("AIRTABLE_TABLE_ID") or "")
-
-
-def _airtable_token() -> str:
-    """Return the Airtable API token/key.
-
-    We standardize on AIRTABLE_API_KEY (which already falls back to AIRTABLE_TOKEN/AIRTABLE_KEY).
-    Some endpoints call this helper for clarity.
-    """
-    return AIRTABLE_API_KEY
-
-
-
-
 app = Flask(__name__, static_folder='webapp', static_url_path='/webapp')
 
 print("🟢 SERVER.PY LOADED - Flask app initialized")
@@ -234,7 +201,7 @@ def _log_incoming_request():
     except Exception:
         pass
 
-APP_VERSION = "v1.4.10-questions-rand-robust-2026-01-16"
+APP_VERSION = "v1.3-beta-auto-renew-2026-01-16"
 
 # Airtable single-select choices (players_beta.qualified_via)
 QUALIFIED_VIA_CHOICE_MAP = {
@@ -583,231 +550,88 @@ def health():
 # -----------------------------------------------------
 # Questions — tirage aléatoire + mapping propre
 # -----------------------------------------------------
-@app.route("/questions/random", methods=["GET"])
+@app.route("/questions/random", methods=["GET", "OPTIONS"])
 def questions_random():
-    """Return random questions from Airtable.
+    # Preflight CORS (au cas où)
+    if request.method == "OPTIONS":
+        return "", 204
 
-    Canon schema (CSV export):
-      - ID_question
-      - Domaine
-      - Niveau
-      - Question
-      - Options (JSON)   (stringified JSON list of 4 options)
-      - Correct_index
-      - Explication
-      - Status
-      - Rand
-
-    Notes:
-    - We intentionally accept small naming variants (e.g. "Explanation") to stay resilient,
-      but the primary targets are the exact names above.
-    """
-
-    # Query params
     try:
         count = int(request.args.get("count", "15"))
-    except Exception:
+    except ValueError:
         count = 15
+
     count = max(1, min(50, count))
 
-    debug = request.args.get("debug") == "1"
+    api_key = os.getenv("AIRTABLE_API_KEY")
+    base_id = os.getenv("AIRTABLE_BASE_ID")
+    table_id = os.getenv("AIRTABLE_TABLE_ID")
 
-    env = _env_mode_from_request()
-    base_id = _questions_base_id(env)
-    table_id = _questions_table_id(env)
+    if not (api_key and base_id and table_id):
+        return jsonify({"error": "missing_env"}), 500
 
-    if not base_id or not table_id:
-        return jsonify({"error": "missing_airtable_config", "ok": False, "version": APP_VERSION}), 500
+    headers = {"Authorization": f"Bearer {api_key}"}
+    base_url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
 
-    token = _airtable_token()
-    if not token:
-        return jsonify({"error": "missing_airtable_token", "ok": False, "version": APP_VERSION}), 500
+    threshold = random.randint(0, 999_999)
 
-    # Pull a bigger sample, then pick randomly client-side (keeps Airtable simple)
-    # If your table is huge, we can later switch to a true random strategy using the Rand field.
-    max_records = 200
-    url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
+    def fetch_chunk(formula: str):
+        params = {
+            "maxRecords": count,
+            "filterByFormula": formula,
+            "sort[0][field]": "Rand",
+            "sort[0][direction]": "asc",
+        }
+        rr = requests.get(base_url, headers=headers, params=params, timeout=10)
+        if rr.status_code != 200:
+            return rr, []
+        return rr, rr.json().get("records", [])
 
-    try:
-        r = requests.get(
-            url,
-            headers={"Authorization": f"Bearer {token}"},
-            params={"pageSize": max_records},
-            timeout=20,
-        )
-    except Exception as e:
+    r1, recs = fetch_chunk(f"{{Rand}}>={threshold}")
+
+    if r1.status_code == 200 and len(recs) < count:
+        r2, recs2 = fetch_chunk(f"{{Rand}}<{threshold}")
+        recs = recs + recs2
+
+    if r1.status_code != 200:
         return jsonify({
-            "ok": False,
-            "error": "airtable_request_failed",
-            "message": str(e),
-            "version": APP_VERSION,
-        }), 502
-
-    # Airtable should return JSON; if it doesn't, expose a small body snippet for debugging.
-    try:
-        data = r.json() if r.content else {}
-    except Exception:
-        return jsonify({
-            "ok": False,
-            "error": "airtable_non_json",
-            "status_code": r.status_code,
-            "body": (r.text or "")[:300],
-            "version": APP_VERSION,
-        }), 502
-
-    # If Airtable responds with an error payload, surface it (keeps 500s out of the happy path).
-    if r.status_code >= 400:
-        return jsonify({
-            "ok": False,
             "error": "airtable_http_error",
-            "status_code": r.status_code,
-            "details": data,
-            "version": APP_VERSION,
+            "status_code": r1.status_code,
+            "detail": r1.text[:500],
         }), 502
 
-    records = data.get("records") if isinstance(data, dict) else None
-    if not isinstance(records, list):
-        records = []
-
-    if not records:
-        return jsonify({"ok": True, "questions": []})
-
-    import random
-    random.shuffle(records)
-    picked = records[:count]
-
-    def _norm(s: str) -> str:
-        return "".join(ch for ch in s.strip().lower() if ch not in "\t\n\r ")
-
-    def _field_get(fields: dict, *candidates: str, contains_all=None):
-        """Exact match first; then tolerant match; then contains-all substrings."""
-        for name in candidates:
-            if name in fields:
-                return fields.get(name), name
-        # tolerant (ignore whitespace)
-        norm_map = { _norm(k): k for k in fields.keys() }
-        for name in candidates:
-            k = norm_map.get(_norm(name))
-            if k is not None:
-                return fields.get(k), k
-        # contains-all
-        if contains_all:
-            wants = [w.lower() for w in contains_all]
-            for k in fields.keys():
-                kl = k.lower()
-                if all(w in kl for w in wants):
-                    return fields.get(k), k
-        return None, None
-
-    def _safe_json_list(v):
-        """Parse options list from JSON string; fallback to simple split if needed."""
-        if v is None:
-            return []
-        if isinstance(v, list):
-            return [str(x) for x in v]
-        if not isinstance(v, str):
-            return []
-        s = v.strip()
-        if not s:
-            return []
-
-        # Primary: JSON list
-        if s.startswith("["):
-            try:
-                parsed = json.loads(s)
-                if isinstance(parsed, list):
-                    return [str(x) for x in parsed]
-            except Exception:
-                pass
-
-        # Secondary: Python-literal list
-        if s.startswith("["):
-            try:
-                import ast
-                parsed = ast.literal_eval(s)
-                if isinstance(parsed, list):
-                    return [str(x) for x in parsed]
-            except Exception:
-                pass
-
-        # Fallback: split lines / separators
-        if "\n" in s:
-            parts = [p.strip() for p in s.split("\n") if p.strip()]
-            if len(parts) >= 4:
-                return parts[:4]
-        if ";" in s:
-            parts = [p.strip() for p in s.split(";") if p.strip()]
-            if len(parts) >= 4:
-                return parts[:4]
-        if "|" in s:
-            parts = [p.strip() for p in s.split("|") if p.strip()]
-            if len(parts) >= 4:
-                return parts[:4]
-
-        return []
-
-    def _safe_int(v):
-        if v is None:
-            return None
-        if isinstance(v, bool):
-            return int(v)
-        if isinstance(v, int):
-            return v
-        if isinstance(v, float):
-            return int(v)
-        if isinstance(v, str):
-            s = v.strip()
-            if not s:
-                return None
-            try:
-                return int(float(s))
-            except Exception:
-                return None
-        return None
+    records = recs[:count]
 
     mapped = []
-    for rec in picked:
-        fields = rec.get("fields", {}) if isinstance(rec, dict) else {}
+    for rec in records:
+        f = rec.get("fields", {})
 
-        qid, qid_key = _field_get(fields, "ID_question")
-        qtxt, qtxt_key = _field_get(fields, "Question")
-        dom, dom_key = _field_get(fields, "Domaine")
-        lvl, lvl_key = _field_get(fields, "Niveau")
-        expl, expl_key = _field_get(fields, "Explication", "Explanation", contains_all=["explic"]) 
-        opt_raw, opt_key = _field_get(fields, "Options (JSON)", "Options", contains_all=["options", "json"]) 
-        cidx_raw, cidx_key = _field_get(fields, "Correct_index", "Correct index", contains_all=["correct", "index"]) 
+        raw_opts = f.get("Options (JSON)", "[]")
+        try:
+            opts = json.loads(raw_opts) if isinstance(
+                raw_opts, str) else (raw_opts or [])
+        except Exception:
+            opts = []
 
-        options = _safe_json_list(opt_raw)
-        correct_index = _safe_int(cidx_raw)
+        mapped.append({
+            "id": f.get("ID_question"),
+            "question": f.get("Question"),
+            "options": opts,
+            "correct_index": f.get("Correct_index"),
+            "explanation": f.get("Explication"),
+            "domaine": f.get("Domaine"),
+            "niveau": f.get("Niveau"),
+        })
 
-        item = {
-            "id": qid or rec.get("id"),
-            "question": qtxt,
-            "options": options,
-            "correct_index": correct_index,
-            "explanation": expl,
-            "level": str(lvl) if lvl is not None else None,
-            "domain": dom,
-        }
-
-        if debug:
-            item["__debug"] = {
-                "keys": sorted(list(fields.keys()))[:50],
-                "options_field": opt_key,
-                "options_raw_type": type(opt_raw).__name__ if opt_raw is not None else None,
-                "options_raw_preview": (str(opt_raw)[:180] if opt_raw is not None else None),
-                "correct_index_field": cidx_key,
-                "id_field": qid_key,
-                "question_field": qtxt_key,
-                "explication_field": expl_key,
-            }
-
-        mapped.append(item)
-
-    return jsonify({"ok": True, "questions": mapped})
+    return jsonify({
+        "count": count,
+        "questions": mapped,
+    }), 200
 
 
-
+# -----------------------------------------------------
+# Errors
+# -----------------------------------------------------
 @app.errorhandler(404)
 def not_found(_):
     return jsonify({"error": "not_found"}), 404
