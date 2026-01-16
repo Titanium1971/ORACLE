@@ -203,7 +203,7 @@ def _log_incoming_request():
     except Exception:
         pass
 
-APP_VERSION = "v1.4-anti-repeat-15-2026-01-16"
+APP_VERSION = "v1.4.1-anti-repeat-15-jsonfix-2026-01-16"
 
 # Airtable single-select choices (players_beta.qualified_via)
 QUALIFIED_VIA_CHOICE_MAP = {
@@ -827,6 +827,15 @@ def questions_random():
         )
 
     return jsonify({"ok": True, "questions": mapped})
+
+
+# --- JSON helper (hotfix) ---
+def _json():
+    """Safe JSON payload reader (force JSON, fail-open)."""
+    try:
+        return request.get_json(force=True, silent=True) or {}
+    except Exception:
+        return {}
 
 @app.route("/ritual/start", methods=["POST", "OPTIONS"])
 def ritual_start():
