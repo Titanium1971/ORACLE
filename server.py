@@ -796,6 +796,140 @@ def airtable_find_latest(table, formula, sort_field="started_at"):
     }
 
 
+def airtable_list(table, formula, sort_field="completed_at", direction="desc", max_records=10):
+    """List Airtable records matching a formula (best effort).
+
+    Notes:
+    - Uses filterByFormula + sort to fetch a small window of recent records.
+    - Designed for audit/qualification logic (not pagination).
+    """
+    headers = _airtable_headers()
+    base = _airtable_base_id(table)
+    if not headers or not base:
+        return {"ok": False, "error": "missing_airtable_env"}
+
+    params = {
+        "filterByFormula": formula,
+        "maxRecords": int(max_records or 10),
+    }
+    if sort_field:
+        params["sort[0][field]"] = sort_field
+        params["sort[0][direction]"] = (direction or "desc")
+
+    r = requests.get(_airtable_url(table), headers=headers, params=params, timeout=20)
+    try:
+        data = r.json()
+    except Exception:
+        data = {"raw": r.text}
+    recs = data.get("records", []) if isinstance(data, dict) else []
+    return {
+        "ok": r.status_code < 300,
+        "status": r.status_code,
+        "records": recs,
+        "raw": data,
+    }
+
+
+def _safe_int(x, default=None):
+    try:
+        if x is None or x == "":
+            return default
+        return int(float(x))
+    except Exception:
+        return default
+
+
+def _beta_eval_from_attempt_fields(fields: dict):
+    """Extract only what we need for beta qualification from an attempt fields dict."""
+    return {
+        "score_raw": _safe_int(fields.get("score_raw"), None),
+        "score_max": _safe_int(fields.get("score_max"), None),
+        "time_total_seconds": _safe_int(fields.get("time_total_seconds"), None),
+        "is_free": bool(fields.get("is_free")),
+        "completed_at": fields.get("completed_at") or fields.get("started_at"),
+    }
+
+
+def evaluate_beta_qualification(attempts_table: str, telegram_user_id: str, current_attempt: dict = None):
+    """Compute beta qualification (A/B/C) from COMPLETED BETA attempts.
+
+    Rules (locked by user):
+    - All paths are evaluated on FREE attempts only (is_free = true) during the trial phase.
+    - Voie C: any ritual at 15/15 (no time constraint)
+    - Voie B: the 2 BEST free rituals (not the last 2), each >=12/15 AND <= 6 minutes
+    - Voie A: the 3 free rituals, average >=8/15 AND each < 7 minutes
+    """
+    tid = str(telegram_user_id)
+    safe_tid = tid.replace('"', '\\"')
+
+    # player is a link field -> it exposes the linked record's primary field value (telegram_user_id)
+    formula = (
+        'AND('
+        f'FIND("{safe_tid}", ARRAYJOIN({{player}})), '
+        '{{env}}="BETA", '
+        '{{status}}="COMPLETED", '
+        '{is_free}=TRUE()'
+        ')'
+    )
+
+    res = airtable_list(attempts_table, formula, sort_field="completed_at", direction="desc", max_records=10)
+    recs = res.get("records", []) if res.get("ok") else []
+
+    attempts = []
+    seen_ids = set()
+    for rec in recs:
+        rid = rec.get("id")
+        if rid:
+            seen_ids.add(rid)
+        fields = rec.get("fields") or {}
+        attempts.append(_beta_eval_from_attempt_fields(fields))
+
+    # Ensure current attempt is considered even if Airtable hasn't surfaced it yet.
+    if isinstance(current_attempt, dict):
+        cur_id = current_attempt.get("id")
+        cur_fields = current_attempt.get("fields") or {}
+        # Only consider it for qualification if it's a FREE attempt.
+        if bool(cur_fields.get("is_free")):
+            if cur_id and cur_id not in seen_ids:
+                attempts.insert(0, _beta_eval_from_attempt_fields(cur_fields))
+            elif not cur_id:
+                attempts.insert(0, _beta_eval_from_attempt_fields(cur_fields))
+
+    def _score(a):
+        return a.get("score_raw") if a else None
+
+    def _time(a):
+        return a.get("time_total_seconds") if a else None
+
+    # Safety: we only evaluate FREE attempts.
+    attempts = [a for a in attempts if a.get("is_free")]
+
+    # --- Voie C ---
+    for a in attempts:
+        if _score(a) == 15:
+            return {"qualified": True, "via": "C"}
+
+    # --- Voie B (2 meilleurs rituels gratuits) ---
+    # Filter by time constraint first, then rank by score desc, time asc.
+    b_candidates = [a for a in attempts if _time(a) is not None and _time(a) <= 360 and _score(a) is not None]
+    b_candidates.sort(key=lambda x: (-_score(x), _time(x)))
+    best2 = b_candidates[:2]
+    if len(best2) == 2 and all((_score(a) >= 12) for a in best2):
+        return {"qualified": True, "via": "B"}
+
+    # --- Voie A ---
+    last3 = attempts[:3]
+    if len(last3) == 3:
+        scores = [s for s in (_score(x) for x in last3) if s is not None]
+        if len(scores) == 3:
+            avg = sum(scores) / 3.0
+            ok_time = all((_time(x) is not None and _time(x) < 420) for x in last3)
+            if ok_time and avg >= 8.0:
+                return {"qualified": True, "via": "A"}
+
+    return {"qualified": False, "via": None}
+
+
 def airtable_update(table, record_id, fields):
     headers = _airtable_headers()
     base = _airtable_base_id(table)
@@ -1626,6 +1760,81 @@ def ritual_complete():
             else:
                 break
 
+        # ===== BETA qualification (Option A/B/C) =====
+        beta_qualification = {"qualified": False, "via": None}
+        beta_player_update_ok = None
+        beta_player_update = None
+        try:
+            # Evaluate only after a completed attempt update (best effort)
+            if attempt_record_id and (attempt_update or {}).get("ok"):
+                current_attempt = {
+                    "id": str(attempt_record_id),
+                    "fields": {
+                        "score_raw": score_raw,
+                        "score_max": score_max,
+                        "time_total_seconds": time_total_seconds,
+                        "completed_at": upd.get("completed_at") or datetime.now(timezone.utc).isoformat(),
+                    },
+                }
+
+                beta_qualification = evaluate_beta_qualification(
+                    attempts_table,
+                    telegram_user_id,
+                    current_attempt=current_attempt,
+                )
+
+                if beta_qualification.get("qualified"):
+                    # Re-read player to respect MANUAL/DISQUALIFIED and avoid overriding ACTIVE
+                    pf = airtable_find_one(players_table, f"{{telegram_user_id}}='{telegram_user_id}'")
+                    player_rec = pf.get("record") if pf.get("ok") else None
+                    player_fields = (player_rec.get("fields") or {}) if player_rec else {}
+
+                    existing_gate = str(player_fields.get("beta_gate_status") or "").strip().upper()
+                    existing_via = str(player_fields.get("qualified_via") or "").strip().upper()
+                    existing_until = player_fields.get("beta_access_until")
+
+                    # Do not override manual decisions
+                    if existing_via in ("MANUAL", "DISQUALIFIED"):
+                        pass
+                    else:
+                        # If already ACTIVE + access_until in the future, do nothing
+                        already_active = False
+                        if existing_gate == "ACTIVE" and existing_until:
+                            try:
+                                eu = datetime.fromisoformat(str(existing_until).replace("Z", "+00:00"))
+                                already_active = eu > datetime.now(timezone.utc)
+                            except Exception:
+                                already_active = True
+
+                        if not already_active:
+                            now_utc = datetime.now(timezone.utc)
+                            new_until = now_utc + timedelta(days=15)
+
+                            # Preserve a later existing access_until if present
+                            if existing_until:
+                                try:
+                                    eu = datetime.fromisoformat(str(existing_until).replace("Z", "+00:00"))
+                                    if eu > new_until:
+                                        new_until = eu
+                                except Exception:
+                                    pass
+
+                            cycles_used = _safe_int(player_fields.get("beta_cycles_used"), 0) or 0
+                            if cycles_used < 1:
+                                cycles_used = 1
+
+                            beta_player_update = {
+                                "beta_gate_status": "ACTIVE",
+                                "beta_access_until": new_until.isoformat(),
+                                "beta_cycles_used": cycles_used,
+                                "qualified_via": str(beta_qualification.get("via") or ""),
+                                "beta_decision_at": now_utc.isoformat(),
+                            }
+
+                            beta_player_update_ok = airtable_update(players_table, p["record_id"], beta_player_update)
+        except Exception as _e:
+            print("🟠 beta_qualification: exception:", repr(_e), flush=True)
+
     # 3) Insert answers (if provided) — tolerant schema
     answers = payload.get("answers") or payload.get("rituel_answers") or []
     answers_inserted = 0
@@ -1701,6 +1910,16 @@ def ritual_complete():
         feedback_res.get("ok") if feedback_res else None,
         "notion_written":
         notion_res.get("ok") if notion_res else False,
+
+        # BETA qualification debug (safe to ignore by clients)
+        "beta_qualified":
+        (beta_qualification or {}).get("qualified") if "beta_qualification" in locals() else None,
+        "qualified_via":
+        (beta_qualification or {}).get("via") if "beta_qualification" in locals() else None,
+        "beta_player_updated":
+        (beta_player_update_ok or {}).get("ok") if "beta_player_update_ok" in locals() and isinstance(beta_player_update_ok, dict) else None,
+        "beta_access_until":
+        (beta_player_update or {}).get("beta_access_until") if "beta_player_update" in locals() and isinstance(beta_player_update, dict) else None,
     })
 
 
