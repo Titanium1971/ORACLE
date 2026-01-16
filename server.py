@@ -695,7 +695,7 @@ def questions_random():
     # -------------------------
     threshold = random.random()
 
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_ID}"
+    url = f"https://api.airtable.com/v0/{os.getenv('AIRTABLE_BASE_ID','')}/{os.getenv('AIRTABLE_TABLE_ID','')}"
     headers = {
         "Authorization": f"Bearer {AIRTABLE_API_KEY}",
         "Content-Type": "application/json",
