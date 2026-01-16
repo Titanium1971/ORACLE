@@ -16,6 +16,13 @@ from flask import Flask, jsonify, request, send_from_directory
 
 APP_ENV = "BETA"  # forced: Airtable env field only supports BETA
 
+# Airtable env (globals)
+AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY") or os.getenv("AIRTABLE_TOKEN") or os.getenv("AIRTABLE_KEY") or ""
+AIRTABLE_BASE_ID = (os.getenv("BETA_AIRTABLE_BASE_ID") or os.getenv("AIRTABLE_BASE_ID") or "") if APP_ENV == "BETA" else (os.getenv("AIRTABLE_BASE_ID") or "")
+AIRTABLE_TABLE_ID = os.getenv("AIRTABLE_TABLE_ID") or os.getenv("QUESTIONS_TABLE_ID") or ""
+
+
+
 app = Flask(__name__, static_folder='webapp', static_url_path='/webapp')
 
 print("🟢 SERVER.PY LOADED - Flask app initialized")
@@ -201,7 +208,7 @@ def _log_incoming_request():
     except Exception:
         pass
 
-APP_VERSION = "v1.4.4-questions-jsonguard-2026-01-16"
+APP_VERSION = "v1.4.5-questions-airtable-globals-2026-01-16"
 
 # Airtable single-select choices (players_beta.qualified_via)
 QUALIFIED_VIA_CHOICE_MAP = {
