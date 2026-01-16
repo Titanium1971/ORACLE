@@ -201,7 +201,7 @@ def _log_incoming_request():
     except Exception:
         pass
 
-APP_VERSION = "v1.2-beta-qualifiedvia-map-2026-01-16"
+APP_VERSION = "v1.3-beta-auto-renew-2026-01-16"
 
 # Airtable single-select choices (players_beta.qualified_via)
 QUALIFIED_VIA_CHOICE_MAP = {
@@ -1292,7 +1292,46 @@ def ritual_start():
         beta_gate_status = str(player_fields.get("beta_gate_status") or "").strip()
         beta_access_until_raw = player_fields.get("beta_access_until")
         beta_until_dt = _parse_iso(beta_access_until_raw)
+        beta_cycles_used = int(player_fields.get("beta_cycles_used") or 0)
         now_dt = datetime.now(timezone.utc)
+
+        # ===== Auto-renew (15 days) up to 3 cycles =====
+        # Rule: if beta_gate_status is ACTIVE but beta_access_until is in the past,
+        # then on next /ritual/start we extend +15 days IF beta_cycles_used < 3.
+        # If beta_cycles_used >= 3, we mark EXPIRED and block.
+        beta_renewed = False
+        if beta_gate_status == "ACTIVE" and beta_until_dt and beta_until_dt <= now_dt:
+            if beta_cycles_used < 3:
+                # Backfill: if cycles_used is 0 while ACTIVE, assume current cycle is 1.
+                current_cycles = beta_cycles_used if beta_cycles_used > 0 else 1
+                new_cycles = current_cycles + 1
+                new_until_dt = now_dt + timedelta(days=15)
+                upd = {
+                    "beta_gate_status": "ACTIVE",
+                    "beta_cycles_used": new_cycles,
+                    "beta_access_until": new_until_dt.isoformat(),
+                }
+                try:
+                    res = airtable_update(players_table, p["record_id"], upd)
+                    if res.get("ok"):
+                        beta_cycles_used = new_cycles
+                        beta_until_dt = new_until_dt
+                        beta_renewed = True
+                        print(f"🟢 beta_auto_renew: +15d (cycle {new_cycles}/3)", flush=True)
+                    else:
+                        print("🟠 beta_auto_renew: update failed", res, flush=True)
+                except Exception as _e:
+                    print("🟠 beta_auto_renew: exception", repr(_e), flush=True)
+            else:
+                try:
+                    airtable_update(players_table, p["record_id"], {"beta_gate_status": "EXPIRED"})
+                except Exception as _e:
+                    print("🟠 beta_expire: update failed", repr(_e), flush=True)
+                return jsonify({
+                    "ok": False,
+                    "error": "beta_expired",
+                    "player_record_id": p["record_id"],
+                }), 403
 
         # STRICT rule: beta active ONLY if beta_gate_status=ACTIVE AND beta_access_until is in the future.
         is_beta_active = bool(beta_until_dt and beta_until_dt > now_dt and beta_gate_status == "ACTIVE")
@@ -1414,6 +1453,7 @@ def ritual_start():
             "version": APP_VERSION,
             "attempt_id": created["data"]["id"],
             "player_record_id": p["record_id"],
+            "beta_renewed": bool(beta_renewed),
         })
 
     except Exception as e:
