@@ -225,7 +225,7 @@ def _log_incoming_request():
     except Exception:
         pass
 
-APP_VERSION = "v1.4.8-questions-optionsjson-2026-01-16"
+APP_VERSION = "v1.4.9-questions-schema-csv-sync-2026-01-16"
 
 # Airtable single-select choices (players_beta.qualified_via)
 QUALIFIED_VIA_CHOICE_MAP = {
@@ -576,286 +576,107 @@ def health():
 # -----------------------------------------------------
 @app.route("/questions/random", methods=["GET"])
 def questions_random():
-    """Return random questions.
+    """Return random questions from Airtable.
 
-    Anti-repetition (BETA only): if telegram_user_id is provided, we try to avoid showing
-    identical/similar questions to the same player during their first 15 completed rituals.
+    Canon schema (CSV export):
+      - ID_question
+      - Domaine
+      - Niveau
+      - Question
+      - Options (JSON)   (stringified JSON list of 4 options)
+      - Correct_index
+      - Explication
+      - Status
+      - Rand
 
-    Similarity rule (best-effort, lightweight):
-      - block exact repeats by ID_question
-      - block very similar question text
-      - block moderately similar question text when the correct answer text matches
-
-    This is designed to be fail-open: if anything goes wrong, we return questions normally.
+    Notes:
+    - We intentionally accept small naming variants (e.g. "Explanation") to stay resilient,
+      but the primary targets are the exact names above.
     """
 
-    count = int(request.args.get("count", 15))
-    tid = request.args.get("telegram_user_id") or request.args.get("tid")
+    # Query params
+    try:
+        count = int(request.args.get("count", "15"))
+    except Exception:
+        count = 15
+    count = max(1, min(50, count))
 
-    # -------------------------
-    # Anti-repeat: build history
-    # -------------------------
-    anti_repeat_enabled = True
-    seen_question_ids = set()
-    history_norm = []  # list of (q_norm, a_norm)
+    debug = request.args.get("debug") == "1"
+
+    env = _env_mode_from_request()
+    base_id = _questions_base_id(env)
+    table_id = _questions_table_id(env)
+
+    if not base_id or not table_id:
+        return jsonify({"error": "missing_airtable_config", "ok": False, "version": APP_VERSION}), 500
+
+    token = _airtable_token()
+    if not token:
+        return jsonify({"error": "missing_airtable_token", "ok": False, "version": APP_VERSION}), 500
+
+    # Pull a bigger sample, then pick randomly client-side (keeps Airtable simple)
+    # If your table is huge, we can later switch to a true random strategy using the Rand field.
+    max_records = 200
+    url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
+
+    try:
+        r = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            params={"pageSize": max_records},
+            timeout=20,
+        )
+        data = r.json() if r.content else {}
+        records = data.get("records") if isinstance(data, dict) else None
+        if not isinstance(records, list):
+            records = []
+    except Exception:
+        return jsonify({"error": "internal_server_error", "ok": False, "version": APP_VERSION}), 500
+
+    if not records:
+        return jsonify({"ok": True, "questions": []})
+
+    import random
+    random.shuffle(records)
+    picked = records[:count]
 
     def _norm(s: str) -> str:
-        if not s:
-            return ""
-        s = str(s)
-        s = unicodedata.normalize("NFKD", s)
-        s = "".join(ch for ch in s if not unicodedata.combining(ch))
-        s = s.lower().strip()
-        s = re.sub(r"[^a-z0-9\s]", " ", s)
-        s = re.sub(r"\s+", " ", s).strip()
-        return s
+        return "".join(ch for ch in s.strip().lower() if ch not in "\t\n\r ")
 
-    def _sim(a: str, b: str) -> float:
-        if not a or not b:
-            return 0.0
-        return difflib.SequenceMatcher(None, a, b).ratio()
-
-    def _safe_resp_json(resp):
-        """Fail-open JSON decode for Airtable responses (avoid 500 on non-JSON bodies)."""
-        try:
-            return resp.json() if resp is not None else {}
-        except Exception:
-            return {}
-
-    # Only try to anti-repeat when we have a telegram_user_id and we can reach the BETA base.
-    # If not, we keep behavior identical to the previous version.
-    if tid:
-        try:
-            beta_base_id = os.getenv("BETA_AIRTABLE_BASE_ID")
-            beta_players_table = os.getenv("BETA_AIRTABLE_PLAYERS_TABLE_ID")
-            beta_attempts_table = os.getenv("BETA_AIRTABLE_ATTEMPTS_TABLE_ID")
-
-            if beta_base_id and beta_players_table and beta_attempts_table:
-                headers = {
-                    "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-                    "Content-Type": "application/json",
-                }
-
-                # 1) Resolve player record by telegram_user_id
-                players_url = f"https://api.airtable.com/v0/{beta_base_id}/{beta_players_table}"
-                pr = requests.get(
-                    players_url,
-                    headers=headers,
-                    params={
-                        "maxRecords": 1,
-                        "filterByFormula": f'{{telegram_user_id}}="{tid}"',
-                    },
-                    timeout=20,
-                )
-
-                player_rec_id = None
-                if pr.status_code == 200:
-                    recs = _safe_resp_json(pr).get("records", [])
-                    if recs:
-                        player_rec_id = recs[0].get("id")
-
-                if player_rec_id:
-                    # 2) Pull up to 15 latest completed attempts for that player
-                    attempts_url = f"https://api.airtable.com/v0/{beta_base_id}/{beta_attempts_table}"
-                    formula = f'FIND("{player_rec_id}", ARRAYJOIN({{player}}))'
-
-                    ar = requests.get(
-                        attempts_url,
-                        headers=headers,
-                        params={
-                            "maxRecords": 15,
-                            "filterByFormula": formula,
-                            "sort[0][field]": "completed_at",
-                            "sort[0][direction]": "desc",
-                        },
-                        timeout=20,
-                    )
-
-                    completed = []
-                    if ar.status_code == 200:
-                        for rec in _safe_resp_json(ar).get("records", []):
-                            fields = rec.get("fields", {})
-                            if fields.get("completed_at"):
-                                completed.append(fields)
-
-                    # If the player already completed >= 15 rituals, anti-repeat is disabled (as requested)
-                    if len(completed) >= 15:
-                        anti_repeat_enabled = False
-
-                    # Build seen IDs + optional similarity memory from answers_json
-                    if anti_repeat_enabled:
-                        for fields in completed:
-                            raw = fields.get("answers_json")
-                            if not raw:
-                                continue
-                            try:
-                                parsed = json.loads(raw)
-                            except Exception:
-                                continue
-
-                            # answers_json is usually a list of answer dicts
-                            items = []
-                            if isinstance(parsed, list):
-                                items = parsed
-                            elif isinstance(parsed, dict):
-                                if isinstance(parsed.get("answers"), list):
-                                    items = parsed.get("answers")
-
-                            for a in items:
-                                if not isinstance(a, dict):
-                                    continue
-                                qid = a.get("question_id") or a.get("id")
-                                if qid:
-                                    seen_question_ids.add(str(qid))
-
-                                qt = a.get("question_text") or a.get("question")
-                                ca = a.get("correct_answer_text")
-                                qn = _norm(qt)
-                                an = _norm(ca)
-                                if qn:
-                                    history_norm.append((qn, an))
-
-        except Exception:
-            # fail-open: never block /questions/random because of anti-repeat
-            anti_repeat_enabled = True
-            seen_question_ids = set()
-            history_norm = []
-
-    # -------------------------
-    # Fetch random candidates (same behavior as before)
-    # -------------------------
-    threshold = random.random()
-
-    q_base_id = _get_questions_base_id()
-    q_table_id = _get_questions_table_id()
-    url = f"https://api.airtable.com/v0/{q_base_id}/{q_table_id}"
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    # Fetch more than needed, then filter locally (avoids huge Airtable formulas)
-    chunk = max(120, min(240, count * 12))
-
-    params = {
-        "sort[0][field]": "Rand",
-        "sort[0][direction]": "asc",
-        "maxRecords": chunk,
-        "filterByFormula": f"{{Rand}} >= {threshold}",
-    }
-
-    r1 = requests.get(url, headers=headers, params=params, timeout=20)
-    records1 = _safe_resp_json(r1).get("records", []) if r1.status_code == 200 else []
-
-    # Wrap around if not enough
-    records2 = []
-    if len(records1) < chunk:
-        params2 = {
-            "sort[0][field]": "Rand",
-            "sort[0][direction]": "asc",
-            "maxRecords": (chunk - len(records1)),
-            "filterByFormula": f"{{Rand}} < {threshold}",
-        }
-        r2 = requests.get(url, headers=headers, params=params2, timeout=20)
-        records2 = _safe_resp_json(r2).get("records", []) if r2.status_code == 200 else []
-
-    candidates = records1 + records2
-
-    def _extract_correct_answer(fields: dict) -> str:
-        opts = fields.get("Options") or fields.get("Options (JSON)")
-        if not opts:
-            return ""
-        try:
-            arr = json.loads(opts) if isinstance(opts, str) else opts
-            if not isinstance(arr, list):
-                return ""
-        except Exception:
-            return ""
-        try:
-            ci = int(fields.get("Correct_index"))
-        except Exception:
-            return ""
-        if 0 <= ci < len(arr):
-            return str(arr[ci])
-        return ""
-
-    # -------------------------
-    # Local filtering
-    # -------------------------
-    picked = []
-    picked_ids = set()
-
-    for rec in candidates:
-        fields = rec.get("fields", {})
-        qid = fields.get("ID_question")
-        if not qid:
-            continue
-        qid = str(qid)
-
-        # Unique in the returned set
-        if qid in picked_ids:
-            continue
-
-        if anti_repeat_enabled and qid in seen_question_ids:
-            continue
-
-        q_text = fields.get("Question", "")
-        ans_text = _extract_correct_answer(fields)
-        qn = _norm(q_text)
-        an = _norm(ans_text)
-
-        # Similarity filtering only if we have a history of texts
-        if anti_repeat_enabled and history_norm and qn:
-            too_similar = False
-            for (hq, ha) in history_norm:
-                if not hq:
-                    continue
-                s = _sim(qn, hq)
-                if s >= 0.92:
-                    too_similar = True
-                    break
-                if an and ha and an == ha and s >= 0.86:
-                    too_similar = True
-                    break
-            if too_similar:
-                continue
-
-        picked.append(rec)
-        picked_ids.add(qid)
-        if len(picked) >= count:
-            break
-
-    # Fail-open: if we could not pick enough, return unfiltered picks from candidates
-    if len(picked) < count:
-        for rec in candidates:
-            fields = rec.get("fields", {})
-            qid = fields.get("ID_question")
-            if not qid:
-                continue
-            qid = str(qid)
-            if qid in picked_ids:
-                continue
-            picked.append(rec)
-            picked_ids.add(qid)
-            if len(picked) >= count:
-                break
+    def _field_get(fields: dict, *candidates: str, contains_all=None):
+        """Exact match first; then tolerant match; then contains-all substrings."""
+        for name in candidates:
+            if name in fields:
+                return fields.get(name), name
+        # tolerant (ignore whitespace)
+        norm_map = { _norm(k): k for k in fields.keys() }
+        for name in candidates:
+            k = norm_map.get(_norm(name))
+            if k is not None:
+                return fields.get(k), k
+        # contains-all
+        if contains_all:
+            wants = [w.lower() for w in contains_all]
+            for k in fields.keys():
+                kl = k.lower()
+                if all(w in kl for w in wants):
+                    return fields.get(k), k
+        return None, None
 
     def _safe_json_list(v):
-        """Return a list of strings from Airtable option payloads.
-
-        Airtable may return:
-        - a JSON string (e.g. '["a","b",...]')
-        - a Python list already parsed
-        """
+        """Parse options list from JSON string; fallback to simple split if needed."""
         if v is None:
             return []
         if isinstance(v, list):
             return [str(x) for x in v]
-        if isinstance(v, str):
-            s = v.strip()
-            if not s:
-                return []
-            # Preferred: strict JSON
+        if not isinstance(v, str):
+            return []
+        s = v.strip()
+        if not s:
+            return []
+
+        # Primary: JSON list
+        if s.startswith("["):
             try:
                 parsed = json.loads(s)
                 if isinstance(parsed, list):
@@ -863,15 +684,30 @@ def questions_random():
             except Exception:
                 pass
 
-            # Fallback: tolerate Python-ish lists like ['a','b','c','d']
-            # (this happens when options were written with str(list) instead of json.dumps)
+        # Secondary: Python-literal list
+        if s.startswith("["):
             try:
                 import ast
                 parsed = ast.literal_eval(s)
                 if isinstance(parsed, list):
                     return [str(x) for x in parsed]
             except Exception:
-                return []
+                pass
+
+        # Fallback: split lines / separators
+        if "\n" in s:
+            parts = [p.strip() for p in s.split("\n") if p.strip()]
+            if len(parts) >= 4:
+                return parts[:4]
+        if ";" in s:
+            parts = [p.strip() for p in s.split(";") if p.strip()]
+            if len(parts) >= 4:
+                return parts[:4]
+        if "|" in s:
+            parts = [p.strip() for p in s.split("|") if p.strip()]
+            if len(parts) >= 4:
+                return parts[:4]
+
         return []
 
     def _safe_int(v):
@@ -894,24 +730,47 @@ def questions_random():
         return None
 
     mapped = []
-    for rec in picked[:count]:
-        fields = rec.get("fields", {})
-        mapped.append(
-            {
-                "id": fields.get("ID_question") or rec.get("id"),
-                "question": fields.get("Question"),
-                # Canon question schema (Airtable):
-                # - Correct_index (number)
-                # - Options (JSON) (stringified JSON list)
-                "options": _safe_json_list(fields.get("Options (JSON)") or fields.get("Options")),
-                "correct_index": _safe_int(fields.get("Correct_index")),
-                "explanation": fields.get("Explication") or fields.get("Explanation"),
-                "level": fields.get("Niveau"),
-                "domain": fields.get("Domaine"),
+    for rec in picked:
+        fields = rec.get("fields", {}) if isinstance(rec, dict) else {}
+
+        qid, qid_key = _field_get(fields, "ID_question")
+        qtxt, qtxt_key = _field_get(fields, "Question")
+        dom, dom_key = _field_get(fields, "Domaine")
+        lvl, lvl_key = _field_get(fields, "Niveau")
+        expl, expl_key = _field_get(fields, "Explication", "Explanation", contains_all=["explic"]) 
+        opt_raw, opt_key = _field_get(fields, "Options (JSON)", "Options", contains_all=["options", "json"]) 
+        cidx_raw, cidx_key = _field_get(fields, "Correct_index", "Correct index", contains_all=["correct", "index"]) 
+
+        options = _safe_json_list(opt_raw)
+        correct_index = _safe_int(cidx_raw)
+
+        item = {
+            "id": qid or rec.get("id"),
+            "question": qtxt,
+            "options": options,
+            "correct_index": correct_index,
+            "explanation": expl,
+            "level": str(lvl) if lvl is not None else None,
+            "domain": dom,
+        }
+
+        if debug:
+            item["__debug"] = {
+                "keys": sorted(list(fields.keys()))[:50],
+                "options_field": opt_key,
+                "options_raw_type": type(opt_raw).__name__ if opt_raw is not None else None,
+                "options_raw_preview": (str(opt_raw)[:180] if opt_raw is not None else None),
+                "correct_index_field": cidx_key,
+                "id_field": qid_key,
+                "question_field": qtxt_key,
+                "explication_field": expl_key,
             }
-        )
+
+        mapped.append(item)
 
     return jsonify({"ok": True, "questions": mapped})
+
+
 
 @app.errorhandler(404)
 def not_found(_):
