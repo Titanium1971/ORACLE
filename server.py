@@ -5,7 +5,6 @@
 # - /questions/random renvoie des questions prêtes pour le front
 # - Tirage réellement aléatoire via champ "Rand" (Airtable)
 
-import unicodedata
 import os
 import json
 import random
@@ -226,7 +225,7 @@ def _log_incoming_request():
     except Exception:
         pass
 
-APP_VERSION = "v1.4.6-questions-basefix-2026-01-16"
+APP_VERSION = "v1.4.8-questions-optionsjson-2026-01-16"
 
 # Airtable single-select choices (players_beta.qualified_via)
 QUALIFIED_VIA_CHOICE_MAP = {
@@ -763,7 +762,7 @@ def questions_random():
     candidates = records1 + records2
 
     def _extract_correct_answer(fields: dict) -> str:
-        opts = fields.get("Options")
+        opts = fields.get("Options") or fields.get("Options (JSON)")
         if not opts:
             return ""
         try:
@@ -841,14 +840,58 @@ def questions_random():
             if len(picked) >= count:
                 break
 
-    def _safe_json_list(s):
-        if not s:
+    def _safe_json_list(v):
+        """Return a list of strings from Airtable option payloads.
+
+        Airtable may return:
+        - a JSON string (e.g. '["a","b",...]')
+        - a Python list already parsed
+        """
+        if v is None:
             return []
-        try:
-            v = json.loads(s)
-            return v if isinstance(v, list) else []
-        except Exception:
-            return []
+        if isinstance(v, list):
+            return [str(x) for x in v]
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            # Preferred: strict JSON
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, list):
+                    return [str(x) for x in parsed]
+            except Exception:
+                pass
+
+            # Fallback: tolerate Python-ish lists like ['a','b','c','d']
+            # (this happens when options were written with str(list) instead of json.dumps)
+            try:
+                import ast
+                parsed = ast.literal_eval(s)
+                if isinstance(parsed, list):
+                    return [str(x) for x in parsed]
+            except Exception:
+                return []
+        return []
+
+    def _safe_int(v):
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return int(v)
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float):
+            return int(v)
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return None
+            try:
+                return int(float(s))
+            except Exception:
+                return None
+        return None
 
     mapped = []
     for rec in picked[:count]:
@@ -857,9 +900,12 @@ def questions_random():
             {
                 "id": fields.get("ID_question") or rec.get("id"),
                 "question": fields.get("Question"),
-                "options": _safe_json_list(fields.get("Options")),
-                "correct_index": fields.get("Correct_index"),
-                "explanation": fields.get("Explication"),
+                # Canon question schema (Airtable):
+                # - Correct_index (number)
+                # - Options (JSON) (stringified JSON list)
+                "options": _safe_json_list(fields.get("Options (JSON)") or fields.get("Options")),
+                "correct_index": _safe_int(fields.get("Correct_index")),
+                "explanation": fields.get("Explication") or fields.get("Explanation"),
                 "level": fields.get("Niveau"),
                 "domain": fields.get("Domaine"),
             }
