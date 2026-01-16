@@ -21,6 +21,23 @@ AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY") or os.getenv("AIRTABLE_TOKEN") 
 AIRTABLE_BASE_ID = (os.getenv("BETA_AIRTABLE_BASE_ID") or os.getenv("AIRTABLE_BASE_ID") or "") if APP_ENV == "BETA" else (os.getenv("AIRTABLE_BASE_ID") or "")
 AIRTABLE_TABLE_ID = os.getenv("AIRTABLE_TABLE_ID") or os.getenv("QUESTIONS_TABLE_ID") or ""
 
+# --- Questions source (may differ from core beta tables) ---
+# If your Questions table lives in a different base than the BETA core tables,
+# set these env vars in Replit Secrets:
+# - QUESTIONS_AIRTABLE_BASE_ID (recommended)
+# - QUESTIONS_TABLE_ID (optional; defaults to AIRTABLE_TABLE_ID)
+QUESTIONS_AIRTABLE_BASE_ID = os.getenv("QUESTIONS_AIRTABLE_BASE_ID", "")
+QUESTIONS_TABLE_ID = os.getenv("QUESTIONS_TABLE_ID", "")
+
+def _get_questions_base_id() -> str:
+    # Prefer explicit questions base; otherwise fall back to the main base id.
+    # (Do NOT force BETA base here, because table IDs are base-scoped.)
+    return (QUESTIONS_AIRTABLE_BASE_ID or os.getenv("AIRTABLE_BASE_ID") or "")
+
+def _get_questions_table_id() -> str:
+    return (QUESTIONS_TABLE_ID or os.getenv("AIRTABLE_TABLE_ID") or "")
+
+
 
 
 app = Flask(__name__, static_folder='webapp', static_url_path='/webapp')
@@ -208,7 +225,7 @@ def _log_incoming_request():
     except Exception:
         pass
 
-APP_VERSION = "v1.4.5-questions-airtable-globals-2026-01-16"
+APP_VERSION = "v1.4.6-questions-basefix-2026-01-16"
 
 # Airtable single-select choices (players_beta.qualified_via)
 QUALIFIED_VIA_CHOICE_MAP = {
@@ -709,7 +726,9 @@ def questions_random():
     # -------------------------
     threshold = random.random()
 
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_ID}"
+    q_base_id = _get_questions_base_id()
+    q_table_id = _get_questions_table_id()
+    url = f"https://api.airtable.com/v0/{q_base_id}/{q_table_id}"
     headers = {
         "Authorization": f"Bearer {AIRTABLE_API_KEY}",
         "Content-Type": "application/json",
