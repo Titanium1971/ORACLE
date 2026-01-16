@@ -201,7 +201,7 @@ def _log_incoming_request():
     except Exception:
         pass
 
-APP_VERSION = "v0.9-debug-airtable-errors"
+APP_VERSION = "v1.0-beta-qualification-fix-2026-01-16"
 
 # ============================================================================
 #  NOTION CONFIGURATION (for ritual/complete endpoint)
@@ -1767,12 +1767,33 @@ def ritual_complete():
         try:
             # Evaluate only after a completed attempt update (best effort)
             if attempt_record_id and (attempt_update or {}).get("ok"):
+                # Determine whether this attempt should count as a FREE trial attempt.
+                # We treat it as free unless the player is already in an ACTIVE beta window.
+                is_free_current = True
+                try:
+                    pf0 = airtable_find_one(players_table, f"{{telegram_user_id}}='{telegram_user_id}'")
+                    pr0 = pf0.get("record") if pf0.get("ok") else None
+                    f0 = (pr0.get("fields") or {}) if pr0 else {}
+                    gate0 = str(f0.get("beta_gate_status") or "").strip().upper()
+                    until0 = f0.get("beta_access_until")
+                    if until0:
+                        try:
+                            u0 = datetime.fromisoformat(str(until0).replace("Z", "+00:00"))
+                            if gate0 == "ACTIVE" and u0 > datetime.now(timezone.utc):
+                                is_free_current = False
+                        except Exception:
+                            # If we can't parse the date, be conservative and keep it as free.
+                            pass
+                except Exception:
+                    pass
+
                 current_attempt = {
                     "id": str(attempt_record_id),
                     "fields": {
                         "score_raw": score_raw,
                         "score_max": score_max,
                         "time_total_seconds": time_total_seconds,
+                        "is_free": is_free_current,
                         "completed_at": upd.get("completed_at") or datetime.now(timezone.utc).isoformat(),
                     },
                 }
