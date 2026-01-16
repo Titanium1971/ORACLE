@@ -5,6 +5,7 @@
 # - /questions/random renvoie des questions prêtes pour le front
 # - Tirage réellement aléatoire via champ "Rand" (Airtable)
 
+import unicodedata
 import os
 import json
 import random
