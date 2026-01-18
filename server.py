@@ -10,6 +10,7 @@ import json
 import random
 import re
 from datetime import datetime, timezone, timedelta
+from difflib import SequenceMatcher
 
 from urllib.parse import parse_qs, unquote_plus
 
@@ -582,25 +583,26 @@ def _extract_tg_user_id_from_init_data(init_data: str):
         return None
 
 
-def _recent_question_ids_for_user(telegram_user_id: str, limit: int = 45):
-    """Return up to `limit` most-recent question ids seen by this user.
+def _recent_question_ids_meta_for_user(telegram_user_id: str, limit: int = 45):
+    """Collect recent question ids from this user's completed attempts.
+
+    Returns a dict:
+      - question_ids: most-recent-first unique ids (up to `limit`)
+      - attempts_count: how many attempts were inspected
 
     Source of truth (BETA schema): rituel_attempts_beta.answers_json
-    - attempts table columns (CSV): attempt_label, player, env, status, completed_at, answers_json
-    - answers_json is a JSON array of objects that include `question_id`.
-
-    We do NOT depend on a separate rituel_answers table.
+      - answers_json is a JSON array of objects that include `question_id`.
     """
     try:
         tid = str(telegram_user_id).strip()
         if not tid:
-            return []
+            return {"question_ids": [], "attempts_count": 0}
         try:
             limit = int(limit or 0)
         except Exception:
             limit = 0
         if limit <= 0:
-            return []
+            return {"question_ids": [], "attempts_count": 0}
         limit = max(1, min(300, limit))
 
         attempts_table = _core_table_name(
@@ -621,7 +623,13 @@ def _recent_question_ids_for_user(telegram_user_id: str, limit: int = 45):
         # Fetch more attempts than needed to reliably collect `limit` question ids.
         # Each attempt carries ~15 question ids.
         max_attempts = max(10, min(50, (limit // 15) + 8))
-        res = airtable_list(attempts_table, formula, sort_field='completed_at', direction='desc', max_records=max_attempts)
+        res = airtable_list(
+            attempts_table,
+            formula,
+            sort_field='completed_at',
+            direction='desc',
+            max_records=max_attempts,
+        )
         recs = res.get('records', []) if res.get('ok') else []
 
         out = []
@@ -661,12 +669,90 @@ def _recent_question_ids_for_user(telegram_user_id: str, limit: int = 45):
                 out.append(qid)
                 seen.add(qid)
                 if len(out) >= limit:
-                    return out
+                    break
+            if len(out) >= limit:
+                break
 
-        return out
+        return {"question_ids": out, "attempts_count": len(recs)}
     except Exception as e:
         print('🟠 anti_repeat: failed to collect recent question ids from attempts:', repr(e), flush=True)
+        return {"question_ids": [], "attempts_count": 0, "error": repr(e)}
+
+
+def _recent_question_ids_for_user(telegram_user_id: str, limit: int = 45):
+    """Backward-compatible wrapper returning only the question id list."""
+    meta = _recent_question_ids_meta_for_user(telegram_user_id, limit)
+    return meta.get('question_ids', []) if isinstance(meta, dict) else []
+
+
+_ANTI_REPEAT_NONALNUM_RE = re.compile(r"[^0-9A-Za-zÀ-ÿ]+")
+
+
+def _anti_repeat_norm_text(s: str) -> str:
+    try:
+        s = str(s or "")
+    except Exception:
+        s = ""
+    s = s.strip().lower()
+    s = _ANTI_REPEAT_NONALNUM_RE.sub(" ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _anti_repeat_extract_options(raw_opts):
+    """Return list of 4 options from an Airtable field (stringified JSON or list)."""
+    if raw_opts is None:
         return []
+    if isinstance(raw_opts, list):
+        return [str(x) for x in raw_opts]
+    if isinstance(raw_opts, str):
+        txt = raw_opts.strip()
+        if not txt:
+            return []
+        try:
+            v = json.loads(txt)
+            if isinstance(v, list):
+                return [str(x) for x in v]
+        except Exception:
+            return []
+    return []
+
+
+def _anti_repeat_fingerprint_from_fields(fields: dict):
+    """Return (question_norm, answer_norm) from an Airtable question record fields."""
+    if not isinstance(fields, dict):
+        return None
+    q = fields.get('Question') or fields.get('question')
+    opts = _anti_repeat_extract_options(fields.get('Options (JSON)') or fields.get('Options') or fields.get('options'))
+    try:
+        correct_index = int(fields.get('Correct_index', 0))
+    except Exception:
+        correct_index = 0
+    ans = ""
+    if isinstance(opts, list) and 0 <= correct_index < len(opts):
+        ans = opts[correct_index]
+    qn = _anti_repeat_norm_text(q)
+    an = _anti_repeat_norm_text(ans)
+    if not qn or not an:
+        return None
+    return (qn, an)
+
+
+def _anti_repeat_is_similar_to_map(q_norm: str, a_norm: str, ref_map: dict, threshold: float) -> bool:
+    """True if q_norm is too similar to any ref question with the same a_norm."""
+    try:
+        if not q_norm or not a_norm or not isinstance(ref_map, dict):
+            return False
+        refs = ref_map.get(a_norm) or []
+        for rq in refs:
+            try:
+                if SequenceMatcher(None, q_norm, rq).ratio() >= threshold:
+                    return True
+            except Exception:
+                continue
+        return False
+    except Exception:
+        return False
 
 # -----------------------------------------------------
 # Questions — tirage aléatoire + mapping propre
@@ -691,8 +777,10 @@ def questions_random():
     if not (api_key and base_id and table_id):
         return jsonify({"error": "missing_env"}), 500
 
-    # ---- Anti-repeat (optional, backwards compatible) ----
+    # ---- Anti-repeat (v3: phases + controlled reintroduction) ----
     # Enabled only when we can resolve a Telegram user id (query param OR initData header).
+    debug_anti = str(request.args.get("__debug_anti_repeat", "0")).strip().lower() in ("1", "true", "yes")
+
     anti_repeat_flag = str(request.args.get("anti_repeat", "1")).strip().lower() not in ("0", "false", "no")
     tg_user_id = (
         request.args.get("telegram_user_id")
@@ -703,17 +791,77 @@ def questions_random():
     if not tg_user_id:
         tg_user_id = _extract_tg_user_id_from_init_data(request.headers.get("X-Telegram-InitData", ""))
 
+    # Config (safe clamped)
     try:
-        window = int(request.args.get("anti_repeat_window", "45"))
-    except ValueError:
-        window = 45
+        phase1_rituals = int(request.args.get("anti_repeat_phase1_rituals", "15"))
+    except Exception:
+        phase1_rituals = 15
+    phase1_rituals = max(1, min(50, phase1_rituals))
+
+    try:
+        strict_rituals = int(request.args.get("anti_repeat_strict_rituals", "5"))
+    except Exception:
+        strict_rituals = 5
+    strict_rituals = max(1, min(25, strict_rituals))
+
+    default_window_q = strict_rituals * max(1, count)
+    try:
+        window = int(request.args.get("anti_repeat_window", str(default_window_q)))
+    except Exception:
+        window = default_window_q
     window = max(0, min(300, window))
 
-    exclude_ids = []
-    if anti_repeat_flag and tg_user_id and window > 0:
-        exclude_ids = _recent_question_ids_for_user(str(tg_user_id), limit=window)
+    try:
+        reintro_max = int(request.args.get("anti_repeat_reintro_max", "1"))
+    except Exception:
+        reintro_max = 1
+    reintro_max = max(0, min(3, reintro_max))
 
-    exclude_set = set(exclude_ids)
+    try:
+        reintro_p = float(request.args.get("anti_repeat_reintro_p", "0.10"))
+    except Exception:
+        reintro_p = 0.10
+    reintro_p = max(0.0, min(1.0, reintro_p))
+
+    try:
+        similar_threshold = float(request.args.get("anti_repeat_similar_threshold", "0.88"))
+    except Exception:
+        similar_threshold = 0.88
+    similar_threshold = max(0.0, min(1.0, similar_threshold))
+
+    anti_repeat_phase = 0  # 0=off, 1=no repeats yet, 2=strict-window + controlled reintro
+    history_ids = []
+    strict_ids = []
+    seen_set = set()
+    strict_set = set()
+    attempts_inspected = 0
+    reintro_id = None
+    reintro_reason = None
+
+    if anti_repeat_flag and tg_user_id:
+        history_cap = max(count, min(300, phase1_rituals * max(1, count)))
+        meta = _recent_question_ids_meta_for_user(str(tg_user_id), limit=history_cap)
+        history_ids = meta.get("question_ids") or []
+        attempts_inspected = int(meta.get("attempts_count") or 0)
+        seen_set = set(history_ids)
+
+        if attempts_inspected < phase1_rituals:
+            # Phase 1: no repeats at all across everything seen so far
+            anti_repeat_phase = 1
+            strict_ids = list(history_ids)
+        else:
+            # Phase 2: strict recent window + (optional) reintroduction of 1 older question
+            anti_repeat_phase = 2
+            strict_ids = list(history_ids[:window])
+
+            older_pool = list(history_ids[window:])
+            if reintro_max > 0 and older_pool and random.random() < reintro_p:
+                reintro_id = random.choice(older_pool)
+
+        strict_set = set([str(x) for x in strict_ids if str(x)])
+
+    # Exclude only the strict window at query-level; the full anti-repeat is enforced after fetch.
+    exclude_set = strict_set
 
     headers = {"Authorization": f"Bearer {api_key}"}
     base_url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
@@ -737,8 +885,8 @@ def questions_random():
     def fetch_chunk(formula: str):
         # Fetch a wider window when anti-repeat is active to keep the probability of filling `count` high.
         max_records = count
-        if exclude_set:
-            max_records = min(200, max(count, count * 8))
+        if exclude_set or (anti_repeat_flag and tg_user_id):
+            max_records = min(250, max(count, count * 10))
 
         params = {
             "maxRecords": int(max_records),
@@ -751,7 +899,7 @@ def questions_random():
             return rr, []
         return rr, rr.json().get("records", [])
 
-    exclude_clause = _build_exclude_clause(exclude_ids)
+    exclude_clause = _build_exclude_clause(list(exclude_set))
 
     f1 = f"{{Rand}}>={threshold}"
     if exclude_clause:
@@ -767,38 +915,162 @@ def questions_random():
         recs = recs + recs2
 
 
-    # De-duplicate + enforce anti-repeat at the Python level (belt & suspenders)
-    unique_records = []
-    seen_qids = set()
+    # -------------------------------------------------
+    # Select records (anti-repeat + similar + controlled reintroduction)
+    # -------------------------------------------------
+    filtered = {
+        'dup': 0,
+        'strict': 0,
+        'repeat': 0,
+        'similar': 0,
+        'bad': 0,
+    }
+
+    # Build similarity reference map from strict window (same correct answer)
+    ref_map = {}
+    if anti_repeat_flag and tg_user_id and strict_set:
+        try:
+            def _fetch_fields_by_ids(ids, batch=25):
+                out = {}
+                ids = [str(x) for x in ids if str(x)]
+                for i in range(0, len(ids), batch):
+                    chunk = ids[i:i+batch]
+                    parts = []
+                    for qid in chunk:
+                        s = str(qid).replace('"', '\"')
+                        parts.append(f'{{ID_question}}="{s}"')
+                    formula = 'OR(' + ','.join(parts) + ')'
+                    params = {
+                        'maxRecords': len(chunk),
+                        'filterByFormula': formula,
+                    }
+                    rr = requests.get(base_url, headers=headers, params=params, timeout=10)
+                    if rr.status_code != 200:
+                        continue
+                    for rec in rr.json().get('records', []) or []:
+                        f = rec.get('fields') or {}
+                        qid = f.get('ID_question')
+                        if qid:
+                            out[str(qid)] = f
+                return out
+
+            strict_fields = _fetch_fields_by_ids(list(strict_set))
+            for _qid, flds in strict_fields.items():
+                fp = _anti_repeat_fingerprint_from_fields(flds)
+                if not fp:
+                    continue
+                qn, an = fp
+                ref_map.setdefault(an, []).append(qn)
+        except Exception as e:
+            if debug_anti:
+                print('🟠 anti_repeat: failed to build similarity map:', repr(e), flush=True)
+            ref_map = {}
+
+    def _passes_similarity(fields: dict) -> bool:
+        fp = _anti_repeat_fingerprint_from_fields(fields)
+        if not fp:
+            return True
+        qn, an = fp
+        return not _anti_repeat_is_similar_to_map(qn, an, ref_map, similar_threshold)
+
+    selected_records = []
+    used_qids = set()
+    reintro_included = False
+
+    # Try to include the chosen reintroduction question (phase 2 only)
+    want_reintro = bool(anti_repeat_flag and tg_user_id and anti_repeat_phase == 2 and reintro_id)
+    if want_reintro:
+        try:
+            rid = str(reintro_id).replace('"', '\"')
+            formula = f'{{ID_question}}="{rid}"'
+            rr = requests.get(base_url, headers=headers, params={'maxRecords': 1, 'filterByFormula': formula}, timeout=10)
+            if rr.status_code == 200:
+                recs0 = rr.json().get('records', []) or []
+                if recs0:
+                    rec0 = recs0[0]
+                    f0 = rec0.get('fields') or {}
+                    qid0 = f0.get('ID_question')
+                    if qid0 and qid0 not in strict_set and _passes_similarity(f0):
+                        selected_records.append(rec0)
+                        used_qids.add(qid0)
+                        reintro_included = True
+                    else:
+                        if qid0 and qid0 in strict_set:
+                            filtered['strict'] += 1
+                        else:
+                            filtered['similar'] += 1
+        except Exception as e:
+            if debug_anti:
+                print('🟠 anti_repeat: failed to fetch reintro question:', repr(e), flush=True)
+
+    # Main fill pass: enforce strict window + (phase2) no repeats except optional reintro already included
     for rec in recs:
-        f = rec.get('fields', {})
-        qid = f.get('ID_question')
-        if qid in exclude_set:
-            continue
-        if qid in seen_qids:
-            continue
-        unique_records.append(rec)
-        seen_qids.add(qid)
-        if len(unique_records) >= count:
+        if len(selected_records) >= count:
             break
+        f = rec.get('fields') or {}
+        qid = f.get('ID_question')
+        if not qid:
+            filtered['bad'] += 1
+            continue
+        if qid in used_qids:
+            filtered['dup'] += 1
+            continue
+        if qid in strict_set:
+            filtered['strict'] += 1
+            continue
 
-    # If we couldn't fill (edge case), we fall back to original recs (still de-duped) to guarantee `count`.
-    if len(unique_records) < count:
-        for rec in recs:
-            f = rec.get('fields', {})
-            qid = f.get('ID_question')
-            if qid in seen_qids:
+        if anti_repeat_flag and tg_user_id:
+            # Phase 1: never repeat anything seen so far (within the history cap)
+            if anti_repeat_phase == 1 and qid in seen_set:
+                filtered['repeat'] += 1
                 continue
-            unique_records.append(rec)
-            seen_qids.add(qid)
-            if len(unique_records) >= count:
+
+            # Phase 2: never repeat anything seen (within the history cap), except the 1 optional reintro already included
+            if anti_repeat_phase == 2 and qid in seen_set:
+                filtered['repeat'] += 1
+                continue
+
+            if not _passes_similarity(f):
+                filtered['similar'] += 1
+                continue
+
+        selected_records.append(rec)
+        used_qids.add(qid)
+
+    # Fallback pass (rare): relax similarity first (still keep strict window + repeat rule)
+    if len(selected_records) < count:
+        for rec in recs:
+            if len(selected_records) >= count:
                 break
+            f = rec.get('fields') or {}
+            qid = f.get('ID_question')
+            if not qid or qid in used_qids or qid in strict_set:
+                continue
+            if anti_repeat_flag and tg_user_id:
+                if anti_repeat_phase == 1 and qid in seen_set:
+                    continue
+                if anti_repeat_phase == 2 and qid in seen_set:
+                    continue
+            selected_records.append(rec)
+            used_qids.add(qid)
 
-    records = unique_records[:count]
+    # Absolute last resort: fill to guarantee `count` (may violate anti-repeat if pool is too small)
+    if len(selected_records) < count:
+        for rec in recs:
+            if len(selected_records) >= count:
+                break
+            f = rec.get('fields') or {}
+            qid = f.get('ID_question')
+            if not qid or qid in used_qids:
+                continue
+            selected_records.append(rec)
+            used_qids.add(qid)
 
-    # Lightweight debug line (helps validate anti-repeat without flooding logs)
+    records = selected_records[:count]
+
+    # Debug line (anti-repeat)
     if tg_user_id and anti_repeat_flag:
-        print(f"🟦 questions_random anti-repeat: user={tg_user_id} excluded={len(exclude_set)} returned={len(records)}", flush=True)
+        print(f"🟦 questions_random anti-repeat: user={tg_user_id} phase={anti_repeat_phase} strict={len(strict_set)} history={len(seen_set)} reintro={'yes' if reintro_included else 'no'} returned={len(records)}", flush=True)
     if r1.status_code != 200:
         return jsonify({
             "error": "airtable_http_error",
@@ -828,10 +1100,10 @@ def questions_random():
             "niveau": f.get("Niveau"),
         })
 
-    return jsonify({
-        "count": count,
-        "questions": mapped,
-    }), 200
+    payload = {"count": count, "questions": mapped}
+    if debug_anti and anti_debug:
+        payload["anti_repeat_debug"] = anti_debug
+    return jsonify(payload), 200
 
 
 # -----------------------------------------------------
