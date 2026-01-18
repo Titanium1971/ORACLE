@@ -11,6 +11,8 @@ import random
 import re
 from datetime import datetime, timezone, timedelta
 
+from urllib.parse import parse_qs, unquote_plus
+
 import requests
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -547,6 +549,125 @@ def health():
     }), 200
 
 
+
+
+# -----------------------------------------------------
+# Anti-repeat helpers (BETA) — no guessing, uses rituel_attempts_beta.answers_json
+# Backwards compatible: if no user id is provided/resolved, /questions/random behaves exactly as before.
+# -----------------------------------------------------
+
+def _extract_tg_user_id_from_init_data(init_data: str):
+    """Best-effort extraction of Telegram user id from WebApp initData.
+
+    NOTE: We do NOT validate the initData hash here.
+    Anti-repeat is not a security boundary; it only improves UX.
+    Returns a string id or None.
+    """
+    try:
+        if not init_data or not isinstance(init_data, str):
+            return None
+        qs = parse_qs(init_data, keep_blank_values=True)
+        user_vals = qs.get('user')
+        if not user_vals:
+            return None
+        user_raw = user_vals[0]
+        try:
+            user_raw = unquote_plus(user_raw)
+        except Exception:
+            pass
+        user = json.loads(user_raw)
+        uid = user.get('id')
+        return str(uid) if uid is not None else None
+    except Exception:
+        return None
+
+
+def _recent_question_ids_for_user(telegram_user_id: str, limit: int = 45):
+    """Return up to `limit` most-recent question ids seen by this user.
+
+    Source of truth (BETA schema): rituel_attempts_beta.answers_json
+    - attempts table columns (CSV): attempt_label, player, env, status, completed_at, answers_json
+    - answers_json is a JSON array of objects that include `question_id`.
+
+    We do NOT depend on a separate rituel_answers table.
+    """
+    try:
+        tid = str(telegram_user_id).strip()
+        if not tid:
+            return []
+        try:
+            limit = int(limit or 0)
+        except Exception:
+            limit = 0
+        if limit <= 0:
+            return []
+        limit = max(1, min(300, limit))
+
+        attempts_table = _core_table_name(
+            "AIRTABLE_ATTEMPTS_TABLE",
+            "rituel_attempts",
+            "BETA_AIRTABLE_ATTEMPTS_TABLE_ID",
+        )
+
+        safe_tid = tid.replace('"', '\\"')
+        formula = (
+            'AND('
+            f'FIND("{safe_tid}", ARRAYJOIN({{player}})), '
+            '{env}="BETA", '
+            '{status}="COMPLETED"'
+            ')'
+        )
+
+        # Fetch more attempts than needed to reliably collect `limit` question ids.
+        # Each attempt carries ~15 question ids.
+        max_attempts = max(10, min(50, (limit // 15) + 8))
+        res = airtable_list(attempts_table, formula, sort_field='completed_at', direction='desc', max_records=max_attempts)
+        recs = res.get('records', []) if res.get('ok') else []
+
+        out = []
+        seen = set()
+
+        for rec in recs:
+            fields = rec.get('fields') or {}
+            raw = fields.get('answers_json') or fields.get('answers')
+            if not raw:
+                continue
+
+            answers = None
+            if isinstance(raw, list):
+                answers = raw
+            elif isinstance(raw, str):
+                try:
+                    answers = json.loads(raw)
+                except Exception:
+                    # Some exports store JSON with CRLF; json.loads can still fail if content is malformed.
+                    try:
+                        answers = json.loads(raw.replace('\r\n', '\n'))
+                    except Exception:
+                        answers = None
+
+            if not isinstance(answers, list):
+                continue
+
+            for a in answers:
+                if not isinstance(a, dict):
+                    continue
+                qid = a.get('question_id') or a.get('ID_question')
+                if qid is None:
+                    continue
+                qid = str(qid).strip()
+                if not qid or qid in seen:
+                    continue
+                out.append(qid)
+                seen.add(qid)
+                if len(out) >= limit:
+                    return out
+
+        return out
+    except Exception as e:
+        print('🟠 anti_repeat: failed to collect recent question ids from attempts:', repr(e), flush=True)
+        return []
+
 # -----------------------------------------------------
 # Questions — tirage aléatoire + mapping propre
 # -----------------------------------------------------
@@ -570,14 +691,57 @@ def questions_random():
     if not (api_key and base_id and table_id):
         return jsonify({"error": "missing_env"}), 500
 
+    # ---- Anti-repeat (optional, backwards compatible) ----
+    # Enabled only when we can resolve a Telegram user id (query param OR initData header).
+    anti_repeat_flag = str(request.args.get("anti_repeat", "1")).strip().lower() not in ("0", "false", "no")
+    tg_user_id = (
+        request.args.get("telegram_user_id")
+        or request.args.get("tg_user_id")
+        or request.args.get("user_id")
+        or request.args.get("telegramId")
+    )
+    if not tg_user_id:
+        tg_user_id = _extract_tg_user_id_from_init_data(request.headers.get("X-Telegram-InitData", ""))
+
+    try:
+        window = int(request.args.get("anti_repeat_window", "45"))
+    except ValueError:
+        window = 45
+    window = max(0, min(300, window))
+
+    exclude_ids = []
+    if anti_repeat_flag and tg_user_id and window > 0:
+        exclude_ids = _recent_question_ids_for_user(str(tg_user_id), limit=window)
+
+    exclude_set = set(exclude_ids)
+
     headers = {"Authorization": f"Bearer {api_key}"}
     base_url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
 
     threshold = random.randint(0, 999_999)
 
+    def _build_exclude_clause(ids):
+        parts = []
+        for qid in ids:
+            try:
+                s = str(qid).replace('"', '\\"')
+            except Exception:
+                continue
+            if not s:
+                continue
+            parts.append(f'{{ID_question}}="{s}"')
+        if not parts:
+            return None
+        return f"NOT(OR({','.join(parts)}))"
+
     def fetch_chunk(formula: str):
+        # Fetch a wider window when anti-repeat is active to keep the probability of filling `count` high.
+        max_records = count
+        if exclude_set:
+            max_records = min(200, max(count, count * 8))
+
         params = {
-            "maxRecords": count,
+            "maxRecords": int(max_records),
             "filterByFormula": formula,
             "sort[0][field]": "Rand",
             "sort[0][direction]": "asc",
@@ -587,12 +751,54 @@ def questions_random():
             return rr, []
         return rr, rr.json().get("records", [])
 
-    r1, recs = fetch_chunk(f"{{Rand}}>={threshold}")
+    exclude_clause = _build_exclude_clause(exclude_ids)
+
+    f1 = f"{{Rand}}>={threshold}"
+    if exclude_clause:
+        f1 = f"AND({f1}, {exclude_clause})"
+
+    r1, recs = fetch_chunk(f1)
 
     if r1.status_code == 200 and len(recs) < count:
-        r2, recs2 = fetch_chunk(f"{{Rand}}<{threshold}")
+        f2 = f"{{Rand}}<{threshold}"
+        if exclude_clause:
+            f2 = f"AND({f2}, {exclude_clause})"
+        r2, recs2 = fetch_chunk(f2)
         recs = recs + recs2
 
+
+    # De-duplicate + enforce anti-repeat at the Python level (belt & suspenders)
+    unique_records = []
+    seen_qids = set()
+    for rec in recs:
+        f = rec.get('fields', {})
+        qid = f.get('ID_question')
+        if qid in exclude_set:
+            continue
+        if qid in seen_qids:
+            continue
+        unique_records.append(rec)
+        seen_qids.add(qid)
+        if len(unique_records) >= count:
+            break
+
+    # If we couldn't fill (edge case), we fall back to original recs (still de-duped) to guarantee `count`.
+    if len(unique_records) < count:
+        for rec in recs:
+            f = rec.get('fields', {})
+            qid = f.get('ID_question')
+            if qid in seen_qids:
+                continue
+            unique_records.append(rec)
+            seen_qids.add(qid)
+            if len(unique_records) >= count:
+                break
+
+    records = unique_records[:count]
+
+    # Lightweight debug line (helps validate anti-repeat without flooding logs)
+    if tg_user_id and anti_repeat_flag:
+        print(f"🟦 questions_random anti-repeat: user={tg_user_id} excluded={len(exclude_set)} returned={len(records)}", flush=True)
     if r1.status_code != 200:
         return jsonify({
             "error": "airtable_http_error",
@@ -600,7 +806,6 @@ def questions_random():
             "detail": r1.text[:500],
         }), 502
 
-    records = recs[:count]
 
     mapped = []
     for rec in records:
@@ -1543,7 +1748,7 @@ def ritual_complete():
             ]
             if payload.get("attempt_label"):
                 # attempt_label helps disambiguate if multiple attempts exist
-                safe_label = str(payload.get("attempt_label")).replace('"', '\"')
+                safe_label = str(payload.get("attempt_label")).replace('"', '"')
                 formula_parts.append(f'{{attempt_label}}="{safe_label}"')
             formula = "AND(" + ",".join(formula_parts) + ")"
             found = airtable_find_latest(attempts_table, formula, sort_field="started_at")
@@ -1804,7 +2009,7 @@ def ritual_complete():
             if "Unknown field name" not in msg:
                 break
             # Extract field name between quotes: Unknown field name: "xxx"
-            m_uf = re.search(r'Unknown field name:\s*\"([^\"]+)\"', msg)
+            m_uf = re.search(r'Unknown field name:\s*"([^"]+)"', msg)
             if not m_uf:
                 break
             bad_field = m_uf.group(1)
