@@ -780,8 +780,6 @@ def questions_random():
     # ---- Anti-repeat (v3: phases + controlled reintroduction) ----
     # Enabled only when we can resolve a Telegram user id (query param OR initData header).
     debug_anti = str(request.args.get("__debug_anti_repeat", "0")).strip().lower() in ("1", "true", "yes")
-    debug_history = str(request.args.get("__debug_history", "0")).strip().lower() in ("1", "true", "yes")
-    anti_debug = None
 
     anti_repeat_flag = str(request.args.get("anti_repeat", "1")).strip().lower() not in ("0", "false", "no")
     tg_user_id = (
@@ -839,7 +837,6 @@ def questions_random():
     attempts_inspected = 0
     reintro_id = None
     reintro_reason = None
-    older_pool = []
 
     if anti_repeat_flag and tg_user_id:
         history_cap = max(count, min(300, phase1_rituals * 15))
@@ -860,39 +857,8 @@ def questions_random():
             older_pool = list(history_ids[window:])
             if reintro_max > 0 and older_pool and random.random() < reintro_p:
                 reintro_id = random.choice(older_pool)
-                reintro_reason = "older_pool"
 
         strict_set = set([str(x) for x in strict_ids if str(x)])
-        if debug_history:
-            anti_debug = {
-                "user": str(tg_user_id),
-                "phase": int(anti_repeat_phase),
-                "attempts_inspected": int(attempts_inspected),
-                "config": {
-                    "count": int(count),
-                    "phase1_rituals": int(phase1_rituals),
-                    "strict_rituals": int(strict_rituals),
-                    "history_rituals": int(history_rituals),
-                    "strict_window": int(strict_window),
-                    "history_window": int(history_window),
-                    "reintro_p": float(reintro_p),
-                    "reintro_max": int(reintro_max),
-                },
-                "counts": {
-                    "history_ids": int(len(history_ids)),
-                    "strict_ids": int(len(strict_ids)),
-                    "older_pool": int(len(older_pool)),
-                },
-                "reintro": {
-                    "id": reintro_id,
-                    "reason": reintro_reason,
-                },
-                "samples": {
-                    "history_ids": history_ids[:200],
-                    "strict_ids": strict_ids[:200],
-                    "older_pool": older_pool[:200],
-                },
-            }
 
     # Exclude only the strict window at query-level; the full anti-repeat is enforced after fetch.
     exclude_set = strict_set
@@ -1134,18 +1100,7 @@ def questions_random():
             "niveau": f.get("Niveau"),
         })
 
-    if anti_debug is not None:
-        returned_ids = [m.get("id") for m in mapped if isinstance(m, dict) and m.get("id")]
-        overlap = sorted(list(set(returned_ids) & set([str(x) for x in strict_ids])))
-        anti_debug["returned_ids"] = returned_ids
-        anti_debug["overlap_with_strict_ids"] = overlap
-        anti_debug["overlap_with_strict_ids_count"] = len(overlap)
-        if reintro_id is not None:
-            anti_debug["reintro_included"] = (reintro_id in returned_ids)
-
     payload = {"count": count, "questions": mapped}
-    if anti_debug is not None:
-        payload["anti_repeat"] = anti_debug
     if debug_anti and debug_anti:
         payload["anti_repeat_debug"] = debug_anti
     return jsonify(payload), 200
