@@ -1219,7 +1219,7 @@ def questions_random():
                 break
             f = rec.get('fields') or {}
             qid = f.get('ID_question')
-            if not qid or qid in used_qids:
+            if not qid or qid in used_qids or qid in strict_set:
                 continue
             selected_records.append(rec)
             used_qids.add(qid)
