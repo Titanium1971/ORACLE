@@ -6,6 +6,9 @@
 # - Tirage réellement aléatoire via champ "Rand" (Airtable)
 
 import os
+
+# Base directory (stable across gunicorn workers regardless of CWD)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 import json
 import random
 import re
@@ -596,7 +599,7 @@ try:
 except Exception:
     fcntl = None
 
-_ANTI_REPEAT_SERVED_PATH = os.getenv('ANTI_REPEAT_SERVED_PATH') or os.path.join('_lab', 'cache', 'anti_repeat_served.json')
+_ANTI_REPEAT_SERVED_PATH = os.getenv('ANTI_REPEAT_SERVED_PATH') or os.path.join(BASE_DIR, '_lab', 'cache', 'anti_repeat_served.json')
 _ANTI_REPEAT_SERVED_LOCK_PATH = _ANTI_REPEAT_SERVED_PATH + '.lock'
 
 
