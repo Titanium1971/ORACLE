@@ -583,6 +583,130 @@ def _extract_tg_user_id_from_init_data(init_data: str):
         return None
 
 
+
+
+# -----------------------------------------------------
+# ANTI_REPEAT_SERVED_HISTORY (local cache)
+# - Purpose: prevent immediate repeats between successive /questions/random calls
+#   even if the user has not completed/logged a ritual yet.
+# - Storage: small JSON file keyed by telegram_user_id -> [most_recent_qid_first]
+# -----------------------------------------------------
+try:
+    import fcntl  # type: ignore
+except Exception:
+    fcntl = None
+
+_ANTI_REPEAT_SERVED_PATH = os.getenv('ANTI_REPEAT_SERVED_PATH') or os.path.join('_lab', 'cache', 'anti_repeat_served.json')
+_ANTI_REPEAT_SERVED_LOCK_PATH = _ANTI_REPEAT_SERVED_PATH + '.lock'
+
+
+def _anti_repeat__with_lock():
+    """Best-effort process lock for the served-history file."""
+    class _LockCtx:
+        def __enter__(self):
+            try:
+                os.makedirs(os.path.dirname(_ANTI_REPEAT_SERVED_LOCK_PATH) or '.', exist_ok=True)
+                self._fh = open(_ANTI_REPEAT_SERVED_LOCK_PATH, 'a')
+                if fcntl is not None:
+                    fcntl.flock(self._fh, fcntl.LOCK_EX)
+            except Exception:
+                self._fh = None
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            try:
+                if getattr(self, '_fh', None) is not None and fcntl is not None:
+                    try:
+                        fcntl.flock(self._fh, fcntl.LOCK_UN)
+                    except Exception:
+                        pass
+                    try:
+                        self._fh.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            return False
+
+    return _LockCtx()
+
+
+def _anti_repeat__load_served_history() -> dict:
+    with _anti_repeat__with_lock():
+        try:
+            if not os.path.exists(_ANTI_REPEAT_SERVED_PATH):
+                return {}
+            with open(_ANTI_REPEAT_SERVED_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+
+def _anti_repeat__save_served_history(data: dict) -> None:
+    with _anti_repeat__with_lock():
+        try:
+            os.makedirs(os.path.dirname(_ANTI_REPEAT_SERVED_PATH) or '.', exist_ok=True)
+            tmp = _ANTI_REPEAT_SERVED_PATH + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(tmp, _ANTI_REPEAT_SERVED_PATH)
+        except Exception:
+            # Never break the endpoint for cache issues.
+            pass
+
+
+def _anti_repeat__get_recent_served_ids(telegram_user_id: str, limit: int = 300) -> list:
+    try:
+        tg = str(telegram_user_id)
+        data = _anti_repeat__load_served_history()
+        ids = data.get(tg) or []
+        if not isinstance(ids, list):
+            return []
+        out = []
+        for x in ids:
+            if not x:
+                continue
+            sx = str(x)
+            if sx not in out:
+                out.append(sx)
+            if len(out) >= limit:
+                break
+        return out
+    except Exception:
+        return []
+
+
+def _anti_repeat__mark_served(telegram_user_id: str, new_ids: list, max_keep: int = 300) -> None:
+    try:
+        tg = str(telegram_user_id)
+        if not new_ids:
+            return
+        new_ids_norm = []
+        for x in new_ids:
+            if x:
+                new_ids_norm.append(str(x))
+        if not new_ids_norm:
+            return
+
+        data = _anti_repeat__load_served_history()
+        cur = data.get(tg) or []
+        if not isinstance(cur, list):
+            cur = []
+
+        merged = []
+        seen = set()
+        for qid in new_ids_norm + [str(x) for x in cur if x]:
+            if qid in seen:
+                continue
+            seen.add(qid)
+            merged.append(qid)
+            if len(merged) >= max_keep:
+                break
+        data[tg] = merged
+        _anti_repeat__save_served_history(data)
+    except Exception:
+        pass
 def _recent_question_ids_meta_for_user(telegram_user_id: str, limit: int = 45):
     """Collect recent question ids from this user's completed attempts.
 
@@ -1134,6 +1258,13 @@ def questions_random():
             "niveau": f.get("Niveau"),
         })
 
+
+    # Persist served IDs (best-effort) so rapid successive calls won't repeat
+    if anti_repeat_flag and tg_user_id:
+        try:
+            _anti_repeat__mark_served(tg_user_id, [m.get('id') for m in mapped if isinstance(m, dict) and m.get('id')], max_keep=history_cap)
+        except Exception as e:
+            print(f"🟧 anti-repeat served-history write failed: {e}", flush=True)
     if anti_debug is not None:
         returned_ids = [m.get("id") for m in mapped if isinstance(m, dict) and m.get("id")]
         overlap = sorted(list(set(returned_ids) & set([str(x) for x in strict_ids])))

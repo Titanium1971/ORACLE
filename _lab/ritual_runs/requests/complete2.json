@@ -1,0 +1,85 @@
+{
+  "telegram_user_id": "5052599847",
+  "attempt_id": "recMweIeWqdnC7KSE",
+  "status": "COMPLETED",
+  "score_raw": 0,
+  "score_max": 15,
+  "time_total_seconds": 1,
+  "answers": [
+    {
+      "question_id": "VO-AUTO-SPORT_MECA_N2-0002",
+      "selected_index": 0,
+      "correct_index": 0
+    },
+    {
+      "question_id": "VO-AUTO-SCI_GENERAL_N5-0198",
+      "selected_index": 0,
+      "correct_index": 0
+    },
+    {
+      "question_id": "VO-AUTO-GEO_MONDE_N3-0026",
+      "selected_index": 0,
+      "correct_index": 0
+    },
+    {
+      "question_id": "VO-AUTO-GEO_MONDE_N2-0034",
+      "selected_index": 0,
+      "correct_index": 0
+    },
+    {
+      "question_id": "VO-AUTO-SCI_GENERAL_N1-0079",
+      "selected_index": 0,
+      "correct_index": 0
+    },
+    {
+      "question_id": "VO-AUTO-GEO_MONDE_N5-0162",
+      "selected_index": 0,
+      "correct_index": 0
+    },
+    {
+      "question_id": "VO-AUTO-SPORT_MECA_N2-0159",
+      "selected_index": 0,
+      "correct_index": 0
+    },
+    {
+      "question_id": "VO-AUTO-CUL_GENERAL_N5-0009",
+      "selected_index": 0,
+      "correct_index": 0
+    },
+    {
+      "question_id": "VO-AUTO-SCI_GENERAL_N2-0104",
+      "selected_index": 0,
+      "correct_index": 0
+    },
+    {
+      "question_id": "VO-AUTO-GEO_MONDE_N2-0009",
+      "selected_index": 0,
+      "correct_index": 0
+    },
+    {
+      "question_id": "VO-AUTO-PSY_COMPORT_N2-0031",
+      "selected_index": 0,
+      "correct_index": 0
+    },
+    {
+      "question_id": "VO-AUTO-HIST_CIV_MYTH_N4-0004",
+      "selected_index": 0,
+      "correct_index": 0
+    },
+    {
+      "question_id": "VO-AUTO-SPORT_MECA_N4-0179",
+      "selected_index": 0,
+      "correct_index": 0
+    },
+    {
+      "question_id": "VO-AUTO-HIST_CIV_MYTH_N3-0100",
+      "selected_index": 0,
+      "correct_index": 0
+    },
+    {
+      "question_id": "VO-AUTO-SCI_GENERAL_N5-0169",
+      "selected_index": 0,
+      "correct_index": 0
+    }
+  ]
+}
