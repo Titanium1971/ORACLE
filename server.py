@@ -622,7 +622,7 @@ def _recent_question_ids_meta_for_user(telegram_user_id: str, limit: int = 45):
 
         # Fetch more attempts than needed to reliably collect `limit` question ids.
         # Each attempt carries ~15 question ids.
-        max_attempts = max(10, min(50, (limit // 15) + 8))
+        max_attempts = 50
         res = airtable_list(
             attempts_table,
             formula,
@@ -804,7 +804,7 @@ def questions_random():
         strict_rituals = 5
     strict_rituals = max(1, min(25, strict_rituals))
 
-    default_window_q = strict_rituals * max(1, count)
+    default_window_q = strict_rituals * 15
     try:
         window = int(request.args.get("anti_repeat_window", str(default_window_q)))
     except Exception:
@@ -839,7 +839,7 @@ def questions_random():
     reintro_reason = None
 
     if anti_repeat_flag and tg_user_id:
-        history_cap = max(count, min(300, phase1_rituals * max(1, count)))
+        history_cap = max(count, min(300, phase1_rituals * 15))
         meta = _recent_question_ids_meta_for_user(str(tg_user_id), limit=history_cap)
         history_ids = meta.get("question_ids") or []
         attempts_inspected = int(meta.get("attempts_count") or 0)
