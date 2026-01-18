@@ -1101,8 +1101,8 @@ def questions_random():
         })
 
     payload = {"count": count, "questions": mapped}
-    if debug_anti and debug_anti:
-        payload["anti_repeat_debug"] = debug_anti
+    if debug_anti and anti_debug:
+        payload["anti_repeat_debug"] = anti_debug
     return jsonify(payload), 200
 
 
