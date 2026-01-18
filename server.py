@@ -969,6 +969,20 @@ def questions_random():
         history_cap = max(count, min(300, phase1_rituals * 15))
         meta = _recent_question_ids_meta_for_user(str(tg_user_id), limit=history_cap)
         history_ids = meta.get("question_ids") or []
+
+        # Include locally-cached recently served question IDs so the strict window stays inviolable
+        # even when the user calls /questions/random repeatedly without completing rituals.
+        served_cache_ids = _anti_repeat__get_recent_served_ids(tg_user_id, limit=max(120, int(window or 0), int(count or 0) * 4))
+        if served_cache_ids:
+            seen = set()
+            merged = []
+            for _qid in (list(served_cache_ids) + list(history_ids)):
+                _qid = str(_qid or '').strip()
+                if not _qid or _qid in seen:
+                    continue
+                seen.add(_qid)
+                merged.append(_qid)
+            history_ids = merged
         attempts_inspected = int(meta.get("attempts_count") or 0)
         seen_set = set(history_ids)
 
@@ -987,6 +1001,11 @@ def questions_random():
                 reintro_reason = "older_pool"
 
         strict_set = set([str(x) for x in strict_ids if str(x)])
+        # Debug helpers (computed locally to avoid NameError)
+        history_rituals = (len(history_ids) + 14) // 15
+        strict_window = int(window or 0)
+        history_window = int(history_cap or 0)
+
         if debug_history:
             anti_debug = {
                 "user": str(tg_user_id),
