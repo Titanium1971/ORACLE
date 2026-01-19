@@ -494,7 +494,7 @@ def add_cors_headers(response):
 @app.get("/")
 def root():
     return jsonify({
-        "service": "velvet-mcp-core",
+        "service": "velvetoracle",
         "status": "ok",
         "version": APP_VERSION,
     }), 200
