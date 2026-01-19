@@ -710,27 +710,54 @@ def _anti_repeat__mark_served(telegram_user_id: str, new_ids: list, max_keep: in
         _anti_repeat__save_served_history(data)
     except Exception:
         pass
-def _recent_question_ids_meta_for_user(telegram_user_id: str, limit: int = 45):
+def _recent_question_ids_meta_for_user(
+    telegram_user_id: str,
+    limit: int = 45,
+    last_rituals: int | None = None,
+    per_ritual_question_cap: int = 15,
+):
     """Collect recent question ids from this user's completed attempts.
 
     Returns a dict:
-      - question_ids: most-recent-first unique ids (up to `limit`)
-      - attempts_count: how many attempts were inspected
+      - question_ids: most-recent-first unique ids
+      - attempts_count / attempts_rows: how many attempts were inspected
 
     Source of truth (BETA schema): rituel_attempts_beta.answers_json
       - answers_json is a JSON array of objects that include `question_id`.
+
+    Notes:
+      - When `last_rituals` is provided, we fetch up to that many recent attempts (capped)
+        and collect up to last_rituals * per_ritual_question_cap ids.
     """
     try:
         tid = str(telegram_user_id).strip()
         if not tid:
             return {"question_ids": [], "attempts_count": 0}
+        # Determine how many attempts/questions to look back.
+        lr = None
         try:
-            limit = int(limit or 0)
+            if last_rituals is not None:
+                lr = int(last_rituals)
         except Exception:
-            limit = 0
+            lr = None
+        try:
+            per_cap = int(per_ritual_question_cap or 0)
+        except Exception:
+            per_cap = 15
+        per_cap = max(1, min(60, per_cap))
+
+        if lr is not None and lr > 0:
+            # 60 rituals * 15 questions = 900 ids, which is safe.
+            limit = lr * per_cap
+        else:
+            try:
+                limit = int(limit or 0)
+            except Exception:
+                limit = 0
+
         if limit <= 0:
-            return {"question_ids": [], "attempts_count": 0}
-        limit = max(1, min(300, limit))
+            return {"question_ids": [], "attempts_count": 0, "attempts_rows": 0}
+        limit = max(1, min(5000, limit))
 
         attempts_table = _core_table_name(
             "AIRTABLE_ATTEMPTS_TABLE",
@@ -739,10 +766,12 @@ def _recent_question_ids_meta_for_user(telegram_user_id: str, limit: int = 45):
         )
 
         safe_tid = tid.replace('"', '\\"')
+        # IMPORTANT: keep this tolerant.
+        # We filter by player + completed status, without forcing env, so anti-repeat works
+        # even if some attempts were recorded under a different env value.
         formula = (
             'AND('
             f'FIND("{safe_tid}", ARRAYJOIN({{player}})), '
-            '{env}="BETA", '
             '{status}="COMPLETED"'
             ')'
         )
@@ -750,6 +779,9 @@ def _recent_question_ids_meta_for_user(telegram_user_id: str, limit: int = 45):
         # Fetch more attempts than needed to reliably collect `limit` question ids.
         # Each attempt carries ~15 question ids.
         max_attempts = 50
+        if lr is not None and lr > 0:
+            max_attempts = max(max_attempts, lr)
+        max_attempts = max(1, min(200, max_attempts))
         res = airtable_list(
             attempts_table,
             formula,
@@ -800,7 +832,7 @@ def _recent_question_ids_meta_for_user(telegram_user_id: str, limit: int = 45):
             if len(out) >= limit:
                 break
 
-        return {"question_ids": out, "attempts_count": len(recs)}
+        return {"question_ids": out, "attempts_count": len(recs), "attempts_rows": len(recs)}
     except Exception as e:
         print('🟠 anti_repeat: failed to collect recent question ids from attempts:', repr(e), flush=True)
         return {"question_ids": [], "attempts_count": 0, "error": repr(e)}
@@ -925,8 +957,14 @@ def questions_random():
             anti_repeat_rituals = 5
         if anti_repeat_rituals < 0:
             anti_repeat_rituals = 0
-        if anti_repeat_rituals > 50:
-            anti_repeat_rituals = 50
+        try:
+            max_rituals = int(os.getenv("ANTI_REPEAT_RITUALS_MAX") or "300")
+        except Exception:
+            max_rituals = 300
+        if max_rituals < 1:
+            max_rituals = 300
+        if anti_repeat_rituals > max_rituals:
+            anti_repeat_rituals = max_rituals
 
         debug_history = (request.args.get("__debug_history", "0").strip() == "1")
 
