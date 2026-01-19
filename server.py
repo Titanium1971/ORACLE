@@ -968,6 +968,17 @@ def questions_random():
 
         debug_history = (request.args.get("__debug_history", "0").strip() == "1")
 
+        # Max number of questions we are allowed to relax (reuse from the excluded recent-history set).
+        # Default: 1 (can be overridden by env ANTI_REPEAT_MAX_OLD_PER_RITUAL or query param max_old_per_ritual).
+        try:
+            max_old_per_ritual = int(request.args.get("max_old_per_ritual") or os.getenv("ANTI_REPEAT_MAX_OLD_PER_RITUAL") or "1")
+        except Exception:
+            max_old_per_ritual = 1
+        if max_old_per_ritual < 0:
+            max_old_per_ritual = 0
+        if max_old_per_ritual > 5:
+            max_old_per_ritual = 5
+
         # ---- choose questions source (official first, legacy fallback) ----
         api_key = os.getenv("AIRTABLE_API_KEY")
         if not api_key:
@@ -1120,35 +1131,62 @@ def questions_random():
 
         # ---- fetch candidates from Airtable (two passes to wrap) ----
         def _fetch_candidates(filter_formula: str | None, max_records: int):
-            params = {
+            """Fetch up to `max_records` Airtable records (handles pagination via `offset`).
+
+            Note: Airtable returns at most `pageSize` records per request; `maxRecords` requires paging.
+            """
+            params_base = {
                 "pageSize": 100,
                 "maxRecords": max_records,
             }
             if q_view:
-                params["view"] = q_view
+                params_base["view"] = q_view
             if filter_formula:
-                params["filterByFormula"] = filter_formula
+                params_base["filterByFormula"] = filter_formula
             # Sort by N1_seq if available (best-effort)
-            params["sort[0][field]"] = "N1_seq"
-            params["sort[0][direction]"] = "asc"
+            params_base["sort[0][field]"] = "N1_seq"
+            params_base["sort[0][direction]"] = "asc"
 
-            payload, st, detail = _airtable_get(params)
-            if st != 200:
-                return None, st, detail
-            return payload.get("records") or [], 200, ""
+            out = []
+            offset = None
+            while True:
+                params = dict(params_base)
+                if offset:
+                    params["offset"] = offset
+                payload, st, detail = _airtable_get(params)
+                if st != 200:
+                    return None, st, detail
+                recs = (payload.get("records") or []) if isinstance(payload, dict) else []
+                out.extend(recs)
+                offset = payload.get("offset") if isinstance(payload, dict) else None
+                if not offset or len(out) >= max_records:
+                    break
+            return out[:max_records], 200, ""
 
         want_candidates = max(250, count * 25)
+        if excluded_ids:
+            # With a large exclusion window, we must pull more candidates to avoid falling back to repeats.
+            try:
+                want_candidates = max(want_candidates, min(2000, len(excluded_ids) + (count * 10)))
+            except Exception:
+                pass
+        if want_candidates > 2000:
+            want_candidates = 2000
         records = []
 
         if anchor is not None:
-            recs1, st1, det1 = _fetch_candidates(f"{{N1_seq}} >= {anchor}", want_candidates)
+            # Split the candidate budget across the wrap-around queries to keep total volume reasonable.
+            want_each = max(250, (want_candidates + 1) // 2)
+            recs1, st1, det1 = _fetch_candidates(f"{{N1_seq}} >= {anchor}", want_each)
             if st1 != 200:
                 # If N1_seq is unknown (422), fall back to view-only fetch below.
                 recs1 = []
-            recs2, st2, det2 = _fetch_candidates(f"{{N1_seq}} < {anchor}", want_candidates)
+            recs2, st2, det2 = _fetch_candidates(f"{{N1_seq}} < {anchor}", want_each)
             if st2 != 200:
                 recs2 = []
             records = (recs1 or []) + (recs2 or [])
+            if len(records) > want_candidates:
+                records = records[:want_candidates]
 
         if not records:
             recs0, st0, det0 = _fetch_candidates(None, want_candidates)
@@ -1186,18 +1224,12 @@ def questions_random():
             if len(selected) >= count:
                 break
 
-        # If we failed to fill, relax gradually by trimming excluded_ids (keep most recent first).
-        if len(selected) < count and excluded_ids and history_ids:
-            # keep only the most recent half, then retry from the same pool
-            keep = max(0, (len(history_ids) // 2))
-            relaxed_excluded = set(str(x) for x in history_ids[:keep] if x)
-            # keep served cache always
-            for x in recent_served or []:
-                if x:
-                    relaxed_excluded.add(str(x))
-
+        # If we could not fill while respecting the exclusion window, relax only slightly:
+        # allow up to `max_old_per_ritual` questions from the excluded recent-history set.
+        old_injected_count = 0
+        if len(selected) < count and excluded_ids and max_old_per_ritual > 0:
             for rec in records:
-                if len(selected) >= count:
+                if len(selected) >= count or old_injected_count >= max_old_per_ritual:
                     break
                 q = _normalize_record(rec)
                 if not q:
@@ -1205,24 +1237,11 @@ def questions_random():
                 qid = q.get("id")
                 if not qid or qid in selected_ids:
                     continue
-                if qid in relaxed_excluded:
+                if qid not in excluded_ids:
                     continue
                 selected.append({k: v for k, v in q.items() if not k.startswith("_")})
                 selected_ids.add(qid)
-
-        # last resort: allow repeats if dataset too small
-        if len(selected) < count:
-            for rec in records:
-                if len(selected) >= count:
-                    break
-                q = _normalize_record(rec)
-                if not q:
-                    continue
-                qid = q.get("id")
-                if not qid or qid in selected_ids:
-                    continue
-                selected.append({k: v for k, v in q.items() if not k.startswith("_")})
-                selected_ids.add(qid)
+                old_injected_count += 1
 
         # Mark served cache (best-effort)
         if anti_repeat_flag and tg_user_id and selected:
@@ -1244,6 +1263,8 @@ def questions_random():
                 "excluded_ids_count": len(excluded_ids),
                 "history_ids_count": len(history_ids),
                 "served_cache_count": len(recent_served),
+                "max_old_per_ritual": int(max_old_per_ritual or 0),
+                "old_injected_count": int(old_injected_count or 0),
                 "attempts_rows": attempts_rows,
             }
 
