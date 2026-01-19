@@ -1017,7 +1017,7 @@ def questions_random():
             if all(x is not None for x in (a, b, c, d)):
                 return [str(a), str(b), str(c), str(d)]
             # Fallback: Options as JSON array or list
-            opts = fields.get("Options") or fields.get("options")
+            opts = fields.get("Options (JSON)") or fields.get("Options") or fields.get("options")
             if isinstance(opts, list) and len(opts) == 4:
                 return [str(x) for x in opts]
             if isinstance(opts, str):
