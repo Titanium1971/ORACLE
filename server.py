@@ -845,55 +845,32 @@ def _anti_repeat_extract_options(raw_opts):
     return []
 
 
-def _extract_options_from_fields(fields: dict):
-    """Robust options extraction across legacy/BETA/PROD Airtable schemas.
-
-    Supports:
-      - Options (JSON) / Options: JSON stringified list OR real list
-      - Option_A..D (or "Option A".."Option D")
-
-    Returns a list of 4 strings when possible; otherwise an empty list.
-    """
-    if not isinstance(fields, dict):
-        return []
-
-    # 1) JSON/list options
-    for k in ("Options (JSON)", "Options", "options"):
-        opts = _anti_repeat_extract_options(fields.get(k))
-        if opts:
-            return opts
-
-    # 2) Split fields
-    candidates = [
-        ("Option_A", "Option_B", "Option_C", "Option_D"),
-        ("Option A", "Option B", "Option C", "Option D"),
-    ]
-    for keys in candidates:
-        vals = []
-        non_empty = 0
-        for kk in keys:
-            v = fields.get(kk)
-            v = "" if v is None else str(v)
-            v = v.strip()
-            if v:
-                non_empty += 1
-            vals.append(v)
-        # Consider it valid if we have at least 2 real options.
-        if non_empty >= 2:
-            # Ensure exactly 4 entries.
-            while len(vals) < 4:
-                vals.append("")
-            return vals[:4]
-
-    return []
-
-
 def _anti_repeat_fingerprint_from_fields(fields: dict):
     """Return (question_norm, answer_norm) from an Airtable question record fields."""
     if not isinstance(fields, dict):
         return None
     q = fields.get('Question') or fields.get('question')
-    opts = _extract_options_from_fields(fields)
+    opts = _anti_repeat_extract_options(fields.get('Options (JSON)') or fields.get('Options') or fields.get('options'))
+    if not opts:
+        # Support canonical schema (Option_A..D)
+        o = [
+            fields.get('Option_A'),
+            fields.get('Option_B'),
+            fields.get('Option_C'),
+            fields.get('Option_D'),
+        ]
+        if any(x is not None for x in o):
+            opts = [str(x) for x in o]
+    if not opts:
+        # Legacy variants (Option A..D)
+        o = [
+            fields.get('Option A'),
+            fields.get('Option B'),
+            fields.get('Option C'),
+            fields.get('Option D'),
+        ]
+        if any(x is not None for x in o):
+            opts = [str(x) for x in o]
     try:
         correct_index = int(fields.get('Correct_index', 0))
     except Exception:
@@ -941,10 +918,10 @@ def questions_random():
     count = max(1, min(50, count))
 
     api_key = os.getenv("AIRTABLE_API_KEY")
-    # Prefer the dedicated Questions connection when provided
+    # Prefer dedicated Questions envs (official Questions base/table/view), fallback to legacy.
     base_id = os.getenv("AIRTABLE_QUESTIONS_BASE") or os.getenv("AIRTABLE_BASE_ID")
     table_id = os.getenv("AIRTABLE_QUESTIONS_TABLE") or os.getenv("AIRTABLE_TABLE_ID")
-    view_id_or_name = (
+    view_name = (
         os.getenv("AIRTABLE_QUESTIONS_VUE")
         or os.getenv("AIRTABLE_QUESTIONS_VIEW")
         or os.getenv("AIRTABLE_VIEW_NAME")
@@ -1095,8 +1072,6 @@ def questions_random():
     headers = {"Authorization": f"Bearer {api_key}"}
     base_url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
 
-    threshold = random.randint(0, 999_999)
-
     def _build_exclude_clause(ids):
         parts = []
         for qid in ids:
@@ -1111,7 +1086,7 @@ def questions_random():
             return None
         return f"NOT(OR({','.join(parts)}))"
 
-    def fetch_chunk(formula: str):
+    def fetch_chunk(formula):
         # Fetch a wider window when anti-repeat is active to keep the probability of filling `count` high.
         max_records = count
         if exclude_set or (anti_repeat_flag and tg_user_id):
@@ -1119,31 +1094,20 @@ def questions_random():
 
         params = {
             "maxRecords": int(max_records),
-            "filterByFormula": formula,
-            "sort[0][field]": "Rand",
-            "sort[0][direction]": "asc",
         }
-        if view_id_or_name:
-            params["view"] = view_id_or_name
+        if view_name:
+            params["view"] = view_name
+        if formula:
+            params["filterByFormula"] = formula
         rr = requests.get(base_url, headers=headers, params=params, timeout=10)
         if rr.status_code != 200:
             return rr, []
         return rr, rr.json().get("records", [])
 
     exclude_clause = _build_exclude_clause(list(exclude_set))
-
-    f1 = f"{{Rand}}>={threshold}"
-    if exclude_clause:
-        f1 = f"AND({f1}, {exclude_clause})"
-
-    r1, recs = fetch_chunk(f1)
-
-    if r1.status_code == 200 and len(recs) < count:
-        f2 = f"{{Rand}}<{threshold}"
-        if exclude_clause:
-            f2 = f"AND({f2}, {exclude_clause})"
-        r2, recs2 = fetch_chunk(f2)
-        recs = recs + recs2
+    r1, recs = fetch_chunk(exclude_clause)
+    if r1.status_code == 200 and recs:
+        random.shuffle(recs)
 
 
     # -------------------------------------------------
@@ -1159,6 +1123,45 @@ def questions_random():
 
     # Build similarity reference map from strict window (same correct answer)
     ref_map = {}
+    if anti_repeat_flag and tg_user_id and strict_set:
+        try:
+            def _fetch_fields_by_ids(ids, batch=25):
+                out = {}
+                ids = [str(x) for x in ids if str(x)]
+                for i in range(0, len(ids), batch):
+                    chunk = ids[i:i+batch]
+                    parts = []
+                    for qid in chunk:
+                        s = str(qid).replace('"', '\"')
+                        parts.append(f'{{ID_question}}="{s}"')
+                    formula = 'OR(' + ','.join(parts) + ')'
+                    params = {
+                        'maxRecords': len(chunk),
+                        'filterByFormula': formula,
+                    }
+                    if view_name:
+                        params['view'] = view_name
+                    rr = requests.get(base_url, headers=headers, params=params, timeout=10)
+                    if rr.status_code != 200:
+                        continue
+                    for rec in rr.json().get('records', []) or []:
+                        f = rec.get('fields') or {}
+                        qid = f.get('ID_question')
+                        if qid:
+                            out[str(qid)] = f
+                return out
+
+            strict_fields = _fetch_fields_by_ids(list(strict_set))
+            for _qid, flds in strict_fields.items():
+                fp = _anti_repeat_fingerprint_from_fields(flds)
+                if not fp:
+                    continue
+                qn, an = fp
+                ref_map.setdefault(an, []).append(qn)
+        except Exception as e:
+            if debug_anti:
+                print('🟠 anti_repeat: failed to build similarity map:', repr(e), flush=True)
+            ref_map = {}
 
     def _passes_similarity(fields: dict) -> bool:
         fp = _anti_repeat_fingerprint_from_fields(fields)
@@ -1178,8 +1181,8 @@ def questions_random():
             rid = str(reintro_id).replace('"', '\"')
             formula = f'{{ID_question}}="{rid}"'
             params = {'maxRecords': 1, 'filterByFormula': formula}
-            if view_id_or_name:
-                params['view'] = view_id_or_name
+            if view_name:
+                params['view'] = view_name
             rr = requests.get(base_url, headers=headers, params=params, timeout=10)
             if rr.status_code == 200:
                 recs0 = rr.json().get('records', []) or []
@@ -1276,43 +1279,68 @@ def questions_random():
         }), 502
 
 
+    def _options_from_fields(fields: dict):
+        # Preferred: JSON list stored in a single field
+        raw_opts = fields.get("Options (JSON)") or fields.get("Options") or fields.get("options")
+        opts = []
+        if raw_opts is not None:
+            try:
+                opts = json.loads(raw_opts) if isinstance(raw_opts, str) else (raw_opts or [])
+            except Exception:
+                opts = []
+        if isinstance(opts, list):
+            opts = [str(x) for x in opts if x is not None]
+        else:
+            opts = []
+
+        # Fallback: canonical split fields (Option_A..D)
+        if not opts:
+            o = [fields.get("Option_A"), fields.get("Option_B"), fields.get("Option_C"), fields.get("Option_D")]
+            if any(x is not None for x in o):
+                opts = [str(x) for x in o]
+
+        # Fallback: legacy split fields (Option A..D)
+        if not opts:
+            o = [fields.get("Option A"), fields.get("Option B"), fields.get("Option C"), fields.get("Option D")]
+            if any(x is not None for x in o):
+                opts = [str(x) for x in o]
+
+        # Ensure exactly 4 options when available
+        if len(opts) != 4:
+            return []
+        return opts
+
     mapped = []
     for rec in records:
         f = rec.get("fields", {})
 
-        opts = _extract_options_from_fields(f)
+        opts = _options_from_fields(f)
 
-        # correct_index: keep int when possible
-        correct_index = f.get("Correct_index") if isinstance(f, dict) else None
+        # Correct index (robust int)
+        ci = f.get("Correct_index")
         try:
-            correct_index = int(correct_index)
+            ci = int(ci)
         except Exception:
-            correct_index = 0
+            ci = 0
 
-        # explanation / domaine: support both schemas
-        explanation = f.get("Explanation") or f.get("Explication")
+        explanation = (
+            f.get("Explanation")
+            or f.get("Explication")
+            or f.get("explanation")
+        )
         domaine = (
             f.get("Domaine_canon")
             or f.get("Domaine")
             or f.get("Domaine_raw")
             or f.get("Domaine_legacy")
         )
-
-        niveau = f.get("Niveau")
-        if isinstance(niveau, str):
-            # Keep the exact label as stored in Airtable (e.g., "N1" or "4").
-            niveau = niveau.strip()
-        elif niveau is not None:
-            try:
-                niveau = str(int(niveau))
-            except Exception:
-                niveau = str(niveau)
+        niveau = f.get("Niveau") or f.get("niveau")
 
         mapped.append({
             "id": f.get("ID_question"),
             "question": f.get("Question"),
             "options": opts,
-            "correct_index": correct_index,
+            "correct_index": ci,
             "explanation": explanation,
             "domaine": domaine,
             "niveau": niveau,
