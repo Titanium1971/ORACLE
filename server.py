@@ -494,7 +494,7 @@ def add_cors_headers(response):
 @app.get("/")
 def root():
     return jsonify({
-        "service": "velvetoracle",
+        "service": "velvet-mcp-core",
         "status": "ok",
         "version": APP_VERSION,
     }), 200
@@ -851,26 +851,6 @@ def _anti_repeat_fingerprint_from_fields(fields: dict):
         return None
     q = fields.get('Question') or fields.get('question')
     opts = _anti_repeat_extract_options(fields.get('Options (JSON)') or fields.get('Options') or fields.get('options'))
-    if not opts:
-        # Support canonical schema (Option_A..D)
-        o = [
-            fields.get('Option_A'),
-            fields.get('Option_B'),
-            fields.get('Option_C'),
-            fields.get('Option_D'),
-        ]
-        if any(x is not None for x in o):
-            opts = [str(x) for x in o]
-    if not opts:
-        # Legacy variants (Option A..D)
-        o = [
-            fields.get('Option A'),
-            fields.get('Option B'),
-            fields.get('Option C'),
-            fields.get('Option D'),
-        ]
-        if any(x is not None for x in o):
-            opts = [str(x) for x in o]
     try:
         correct_index = int(fields.get('Correct_index', 0))
     except Exception:
@@ -905,474 +885,338 @@ def _anti_repeat_is_similar_to_map(q_norm: str, a_norm: str, ref_map: dict, thre
 # Questions — tirage aléatoire + mapping propre
 # -----------------------------------------------------
 @app.route("/questions/random", methods=["GET", "OPTIONS"])
+
+
 def questions_random():
+    """Return random questions.
+
+    Supports inter-ritual anti-repeat when we can resolve telegram_user_id (query param or X-Telegram-InitData).
+
+    Query params:
+      - count (int): number of questions (default 15)
+      - telegram_user_id (str): optional; enables anti-repeat per user
+      - anti_repeat (0/1): default 1; set 0 to disable anti-repeat
+      - anti_repeat_rituals (int): how many last rituals to avoid repeating (default env ANTI_REPEAT_RITUALS_WINDOW or 5)
+      - __debug_history (0/1): include anti-repeat debug meta
+    """
     # Preflight CORS (au cas où)
     if request.method == "OPTIONS":
         return "", 204
 
     try:
-        count = int(request.args.get("count", "15"))
-    except ValueError:
-        count = 15
+        # ---- inputs ----
+        try:
+            count = int(request.args.get("count", "15"))
+        except Exception:
+            count = 15
+        if count < 1:
+            count = 1
+        if count > 30:
+            count = 30
 
-    count = max(1, min(50, count))
+        tg_user_id = request.args.get("telegram_user_id")
+        if not tg_user_id:
+            tg_user_id = _extract_tg_user_id_from_init_data(request.headers.get("X-Telegram-InitData") or "")
 
-    api_key = os.getenv("AIRTABLE_API_KEY")
-    # Prefer dedicated Questions envs (official Questions base/table/view), fallback to legacy.
-    base_id = os.getenv("AIRTABLE_QUESTIONS_BASE") or os.getenv("AIRTABLE_BASE_ID")
-    table_id = os.getenv("AIRTABLE_QUESTIONS_TABLE") or os.getenv("AIRTABLE_TABLE_ID")
-    view_name = (
-        os.getenv("AIRTABLE_QUESTIONS_VUE")
-        or os.getenv("AIRTABLE_QUESTIONS_VIEW")
-        or os.getenv("AIRTABLE_VIEW_NAME")
-    )
+        anti_repeat_flag = (request.args.get("anti_repeat", "1").strip() != "0")
+        try:
+            anti_repeat_rituals = int(request.args.get("anti_repeat_rituals") or os.getenv("ANTI_REPEAT_RITUALS_WINDOW") or "5")
+        except Exception:
+            anti_repeat_rituals = 5
+        if anti_repeat_rituals < 0:
+            anti_repeat_rituals = 0
+        if anti_repeat_rituals > 50:
+            anti_repeat_rituals = 50
 
-    if not (api_key and base_id and table_id):
-        return jsonify({"error": "missing_env"}), 500
+        debug_history = (request.args.get("__debug_history", "0").strip() == "1")
 
-    # ---- Anti-repeat (v3: phases + controlled reintroduction) ----
-    # Enabled only when we can resolve a Telegram user id (query param OR initData header).
-    debug_anti = str(request.args.get("__debug_anti_repeat", "0")).strip().lower() in ("1", "true", "yes")
-    debug_history = str(request.args.get("__debug_history", "0")).strip().lower() in ("1", "true", "yes")
-    anti_debug = None
+        # ---- choose questions source (official first, legacy fallback) ----
+        api_key = os.getenv("AIRTABLE_API_KEY")
+        if not api_key:
+            return jsonify({"error": "missing_airtable_api_key"}), 500
 
-    anti_repeat_flag = str(request.args.get("anti_repeat", "1")).strip().lower() not in ("0", "false", "no")
-    tg_user_id = (
-        request.args.get("telegram_user_id")
-        or request.args.get("tg_user_id")
-        or request.args.get("user_id")
-        or request.args.get("telegramId")
-    )
-    if not tg_user_id:
-        tg_user_id = _extract_tg_user_id_from_init_data(request.headers.get("X-Telegram-InitData", ""))
+        q_base = os.getenv("AIRTABLE_QUESTIONS_BASE") or os.getenv("AIRTABLE_BASE_ID")
+        q_table = os.getenv("AIRTABLE_QUESTIONS_TABLE") or os.getenv("AIRTABLE_TABLE_ID")
+        q_view = os.getenv("AIRTABLE_QUESTIONS_VUE") or os.getenv("AIRTABLE_VIEW_NAME")
 
-    # Config (safe clamped)
-    try:
-        phase1_rituals = int(request.args.get("anti_repeat_phase1_rituals", "15"))
-    except Exception:
-        phase1_rituals = 15
-    phase1_rituals = max(1, min(50, phase1_rituals))
+        if not q_base or not q_table:
+            return jsonify({"error": "missing_questions_base_or_table"}), 500
 
-    try:
-        strict_rituals = int(request.args.get("anti_repeat_strict_rituals", "5"))
-    except Exception:
-        strict_rituals = 5
-    strict_rituals = max(1, min(25, strict_rituals))
+        # ---- helpers ----
+        def _airtable_get(params: dict):
+            url = f"https://api.airtable.com/v0/{q_base}/{q_table}"
+            headers = {"Authorization": f"Bearer {api_key}"}
+            r = requests.get(url, headers=headers, params=params, timeout=25)
+            if r.status_code >= 400:
+                # preserve airtable error payload in detail
+                try:
+                    detail = r.text
+                except Exception:
+                    detail = ""
+                return None, r.status_code, detail
+            try:
+                return r.json(), 200, ""
+            except Exception:
+                return None, 502, "invalid_json_from_airtable"
 
-    default_window_q = strict_rituals * 15
-    try:
-        window = int(request.args.get("anti_repeat_window", str(default_window_q)))
-    except Exception:
-        window = default_window_q
-    window = max(0, min(300, window))
+        def _parse_options(fields: dict):
+            # Official schema: Option_A..D
+            a = fields.get("Option_A")
+            b = fields.get("Option_B")
+            c = fields.get("Option_C")
+            d = fields.get("Option_D")
+            if all(x is not None for x in (a, b, c, d)):
+                return [str(a), str(b), str(c), str(d)]
+            # Fallback: Options as JSON array or list
+            opts = fields.get("Options") or fields.get("options")
+            if isinstance(opts, list) and len(opts) == 4:
+                return [str(x) for x in opts]
+            if isinstance(opts, str):
+                try:
+                    j = json.loads(opts)
+                    if isinstance(j, list) and len(j) == 4:
+                        return [str(x) for x in j]
+                except Exception:
+                    pass
+            return []
 
-    try:
-        reintro_max = int(request.args.get("anti_repeat_reintro_max", "1"))
-    except Exception:
-        reintro_max = 1
-    reintro_max = max(0, min(3, reintro_max))
+        def _normalize_record(rec: dict):
+            fields = rec.get("fields") or {}
+            qid = fields.get("ID_question") or rec.get("id")
+            if not qid:
+                return None
+            question = fields.get("Question") or fields.get("question")
+            if not question:
+                return None
 
-    try:
-        reintro_p = float(request.args.get("anti_repeat_reintro_p", "0.10"))
-    except Exception:
-        reintro_p = 0.10
-    reintro_p = max(0.0, min(1.0, reintro_p))
+            options = _parse_options(fields)
+            if len(options) != 4:
+                return None
 
-    try:
-        similar_threshold = float(request.args.get("anti_repeat_similar_threshold", "0.88"))
-    except Exception:
-        similar_threshold = 0.88
-    similar_threshold = max(0.0, min(1.0, similar_threshold))
+            correct_index = fields.get("Correct_index")
+            try:
+                correct_index = int(correct_index)
+            except Exception:
+                return None
+            if correct_index < 0 or correct_index > 3:
+                return None
 
-    anti_repeat_phase = 0  # 0=off, 1=no repeats yet, 2=strict-window + controlled reintro
-    history_ids = []
-    strict_ids = []
-    seen_set = set()
-    strict_set = set()
-    attempts_inspected = 0
-    reintro_id = None
-    reintro_reason = None
-    older_pool = []
+            domaine = fields.get("Domaine_canon") or fields.get("Domaine") or fields.get("Domaine_raw") or fields.get("Domaine_legacy")
+            explanation = fields.get("Explanation") or fields.get("Explication") or fields.get("explanation")
+            niveau = fields.get("Niveau") or fields.get("niveau")
 
-    if anti_repeat_flag and tg_user_id:
-        history_cap = max(count, min(300, phase1_rituals * 15))
-        meta = _recent_question_ids_meta_for_user(str(tg_user_id), limit=history_cap)
-        history_ids = meta.get("question_ids") or []
-
-        # Include locally-cached recently served question IDs so the strict window stays inviolable
-        # even when the user calls /questions/random repeatedly without completing rituals.
-        served_cache_ids = _anti_repeat__get_recent_served_ids(tg_user_id, limit=max(120, int(window or 0), int(count or 0) * 4))
-        if served_cache_ids:
-            seen = set()
-            merged = []
-            for _qid in (list(served_cache_ids) + list(history_ids)):
-                _qid = str(_qid or '').strip()
-                if not _qid or _qid in seen:
-                    continue
-                seen.add(_qid)
-                merged.append(_qid)
-            history_ids = merged
-        attempts_inspected = int(meta.get("attempts_count") or 0)
-        seen_set = set(history_ids)
-
-        if attempts_inspected < phase1_rituals:
-            # Phase 1: no repeats at all across everything seen so far
-            anti_repeat_phase = 1
-            strict_ids = list(history_ids)
-        else:
-            # Phase 2: strict recent window + (optional) reintroduction of 1 older question
-            anti_repeat_phase = 2
-            strict_ids = list(history_ids[:window])
-
-            older_pool = list(history_ids[window:])
-            if reintro_max > 0 and older_pool and random.random() < reintro_p:
-                reintro_id = random.choice(older_pool)
-                reintro_reason = "older_pool"
-
-        strict_set = set([str(x) for x in strict_ids if str(x)])
-        # Debug helpers (computed locally to avoid NameError)
-        history_rituals = (len(history_ids) + 14) // 15
-        strict_window = int(window or 0)
-        history_window = int(history_cap or 0)
-
-        if debug_history:
-            anti_debug = {
-                "user": str(tg_user_id),
-                "phase": int(anti_repeat_phase),
-                "attempts_inspected": int(attempts_inspected),
-                "config": {
-                    "count": int(count),
-                    "phase1_rituals": int(phase1_rituals),
-                    "strict_rituals": int(strict_rituals),
-                    "history_rituals": int(history_rituals),
-                    "strict_window": int(strict_window),
-                    "history_window": int(history_window),
-                    "reintro_p": float(reintro_p),
-                    "reintro_max": int(reintro_max),
-                },
-                "counts": {
-                    "history_ids": int(len(history_ids)),
-                    "strict_ids": int(len(strict_ids)),
-                    "older_pool": int(len(older_pool)),
-                },
-                "reintro": {
-                    "id": reintro_id,
-                    "reason": reintro_reason,
-                },
-                "samples": {
-                    "history_ids": history_ids[:200],
-                    "strict_ids": strict_ids[:200],
-                    "older_pool": older_pool[:200],
-                },
+            return {
+                "id": str(qid),
+                "niveau": str(niveau) if niveau is not None else None,
+                "domaine": str(domaine) if domaine is not None else None,
+                "question": str(question),
+                "options": options,
+                "correct_index": correct_index,
+                "explanation": str(explanation) if explanation is not None else None,
+                "_n1_seq": fields.get("N1_seq"),
             }
 
-    # Exclude only the strict window at query-level; the full anti-repeat is enforced after fetch.
-    exclude_set = strict_set
+        # ---- anti-repeat: build exclusion set from last X rituals + served cache ----
+        excluded_ids = set()
+        history_ids = []
+        recent_served = []
+        attempts_rows = 0
 
-    headers = {"Authorization": f"Bearer {api_key}"}
-    base_url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
-
-    def _build_exclude_clause(ids):
-        parts = []
-        for qid in ids:
+        if anti_repeat_flag and tg_user_id and anti_repeat_rituals > 0:
             try:
-                s = str(qid).replace('"', '\\"')
+                # last X rituals -> cap in question count
+                cap = anti_repeat_rituals * max(1, count)
+                meta = _recent_question_ids_meta_for_user(str(tg_user_id), last_rituals=anti_repeat_rituals, per_ritual_question_cap=max(15, count))
+                history_ids = meta.get("question_ids") or []
+                attempts_rows = int(meta.get("attempts_rows") or 0)
+                if cap > 0:
+                    history_ids = history_ids[:cap]
+                for qid in history_ids:
+                    if qid:
+                        excluded_ids.add(str(qid))
             except Exception:
-                continue
-            if not s:
-                continue
-            parts.append(f'{{ID_question}}="{s}"')
-        if not parts:
-            return None
-        return f"NOT(OR({','.join(parts)}))"
+                history_ids = []
 
-    def fetch_chunk(formula):
-        # Fetch a wider window when anti-repeat is active to keep the probability of filling `count` high.
-        max_records = count
-        if exclude_set or (anti_repeat_flag and tg_user_id):
-            max_records = min(250, max(count, count * 10))
-
-        params = {
-            "maxRecords": int(max_records),
-        }
-        if view_name:
-            params["view"] = view_name
-        if formula:
-            params["filterByFormula"] = formula
-        rr = requests.get(base_url, headers=headers, params=params, timeout=10)
-        if rr.status_code != 200:
-            return rr, []
-        return rr, rr.json().get("records", [])
-
-    exclude_clause = _build_exclude_clause(list(exclude_set))
-    r1, recs = fetch_chunk(exclude_clause)
-    if r1.status_code == 200 and recs:
-        random.shuffle(recs)
-
-
-    # -------------------------------------------------
-    # Select records (anti-repeat + similar + controlled reintroduction)
-    # -------------------------------------------------
-    filtered = {
-        'dup': 0,
-        'strict': 0,
-        'repeat': 0,
-        'similar': 0,
-        'bad': 0,
-    }
-
-    # Build similarity reference map from strict window (same correct answer)
-    ref_map = {}
-    if anti_repeat_flag and tg_user_id and strict_set:
-        try:
-            def _fetch_fields_by_ids(ids, batch=25):
-                out = {}
-                ids = [str(x) for x in ids if str(x)]
-                for i in range(0, len(ids), batch):
-                    chunk = ids[i:i+batch]
-                    parts = []
-                    for qid in chunk:
-                        s = str(qid).replace('"', '\"')
-                        parts.append(f'{{ID_question}}="{s}"')
-                    formula = 'OR(' + ','.join(parts) + ')'
-                    params = {
-                        'maxRecords': len(chunk),
-                        'filterByFormula': formula,
-                    }
-                    if view_name:
-                        params['view'] = view_name
-                    rr = requests.get(base_url, headers=headers, params=params, timeout=10)
-                    if rr.status_code != 200:
-                        continue
-                    for rec in rr.json().get('records', []) or []:
-                        f = rec.get('fields') or {}
-                        qid = f.get('ID_question')
-                        if qid:
-                            out[str(qid)] = f
-                return out
-
-            strict_fields = _fetch_fields_by_ids(list(strict_set))
-            for _qid, flds in strict_fields.items():
-                fp = _anti_repeat_fingerprint_from_fields(flds)
-                if not fp:
-                    continue
-                qn, an = fp
-                ref_map.setdefault(an, []).append(qn)
-        except Exception as e:
-            if debug_anti:
-                print('🟠 anti_repeat: failed to build similarity map:', repr(e), flush=True)
-            ref_map = {}
-
-    def _passes_similarity(fields: dict) -> bool:
-        fp = _anti_repeat_fingerprint_from_fields(fields)
-        if not fp:
-            return True
-        qn, an = fp
-        return not _anti_repeat_is_similar_to_map(qn, an, ref_map, similar_threshold)
-
-    selected_records = []
-    used_qids = set()
-    reintro_included = False
-
-    # Try to include the chosen reintroduction question (phase 2 only)
-    want_reintro = bool(anti_repeat_flag and tg_user_id and anti_repeat_phase == 2 and reintro_id)
-    if want_reintro:
-        try:
-            rid = str(reintro_id).replace('"', '\"')
-            formula = f'{{ID_question}}="{rid}"'
-            params = {'maxRecords': 1, 'filterByFormula': formula}
-            if view_name:
-                params['view'] = view_name
-            rr = requests.get(base_url, headers=headers, params=params, timeout=10)
-            if rr.status_code == 200:
-                recs0 = rr.json().get('records', []) or []
-                if recs0:
-                    rec0 = recs0[0]
-                    f0 = rec0.get('fields') or {}
-                    qid0 = f0.get('ID_question')
-                    if qid0 and qid0 not in strict_set and _passes_similarity(f0):
-                        selected_records.append(rec0)
-                        used_qids.add(qid0)
-                        reintro_included = True
-                    else:
-                        if qid0 and qid0 in strict_set:
-                            filtered['strict'] += 1
-                        else:
-                            filtered['similar'] += 1
-        except Exception as e:
-            if debug_anti:
-                print('🟠 anti_repeat: failed to fetch reintro question:', repr(e), flush=True)
-
-    # Main fill pass: enforce strict window + (phase2) no repeats except optional reintro already included
-    for rec in recs:
-        if len(selected_records) >= count:
-            break
-        f = rec.get('fields') or {}
-        qid = f.get('ID_question')
-        if not qid:
-            filtered['bad'] += 1
-            continue
-        if qid in used_qids:
-            filtered['dup'] += 1
-            continue
-        if qid in strict_set:
-            filtered['strict'] += 1
-            continue
-
-        if anti_repeat_flag and tg_user_id:
-            # Phase 1: never repeat anything seen so far (within the history cap)
-            if anti_repeat_phase == 1 and qid in seen_set:
-                filtered['repeat'] += 1
-                continue
-
-            # Phase 2: never repeat anything seen (within the history cap), except the 1 optional reintro already included
-            if anti_repeat_phase == 2 and qid in seen_set:
-                filtered['repeat'] += 1
-                continue
-
-            if not _passes_similarity(f):
-                filtered['similar'] += 1
-                continue
-
-        selected_records.append(rec)
-        used_qids.add(qid)
-
-    # Fallback pass (rare): relax similarity first (still keep strict window + repeat rule)
-    if len(selected_records) < count:
-        for rec in recs:
-            if len(selected_records) >= count:
-                break
-            f = rec.get('fields') or {}
-            qid = f.get('ID_question')
-            if not qid or qid in used_qids or qid in strict_set:
-                continue
-            if anti_repeat_flag and tg_user_id:
-                if anti_repeat_phase == 1 and qid in seen_set:
-                    continue
-                if anti_repeat_phase == 2 and qid in seen_set:
-                    continue
-            selected_records.append(rec)
-            used_qids.add(qid)
-
-    # Absolute last resort: fill to guarantee `count` (may violate anti-repeat if pool is too small)
-    if len(selected_records) < count:
-        for rec in recs:
-            if len(selected_records) >= count:
-                break
-            f = rec.get('fields') or {}
-            qid = f.get('ID_question')
-            if not qid or qid in used_qids or qid in strict_set:
-                continue
-            selected_records.append(rec)
-            used_qids.add(qid)
-
-    records = selected_records[:count]
-
-    # Debug line (anti-repeat)
-    if tg_user_id and anti_repeat_flag:
-        print(f"🟦 questions_random anti-repeat: user={tg_user_id} phase={anti_repeat_phase} strict={len(strict_set)} history={len(seen_set)} reintro={'yes' if reintro_included else 'no'} returned={len(records)}", flush=True)
-    if r1.status_code != 200:
-        return jsonify({
-            "error": "airtable_http_error",
-            "status_code": r1.status_code,
-            "detail": r1.text[:500],
-        }), 502
-
-
-    def _options_from_fields(fields: dict):
-        # Preferred: JSON list stored in a single field
-        raw_opts = fields.get("Options (JSON)") or fields.get("Options") or fields.get("options")
-        opts = []
-        if raw_opts is not None:
             try:
-                opts = json.loads(raw_opts) if isinstance(raw_opts, str) else (raw_opts or [])
+                # Also avoid immediate repeats when a ritual has started but not yet logged.
+                recent_served = _anti_repeat__get_recent_served_ids(str(tg_user_id), limit=max(120, anti_repeat_rituals * max(15, count)))
+                for qid in recent_served:
+                    if qid:
+                        excluded_ids.add(str(qid))
             except Exception:
-                opts = []
-        if isinstance(opts, list):
-            opts = [str(x) for x in opts if x is not None]
-        else:
-            opts = []
+                recent_served = []
 
-        # Fallback: canonical split fields (Option_A..D)
-        if not opts:
-            o = [fields.get("Option_A"), fields.get("Option_B"), fields.get("Option_C"), fields.get("Option_D")]
-            if any(x is not None for x in o):
-                opts = [str(x) for x in o]
+        # ---- random anchor using N1_seq (best-effort) ----
+        n1_seq_max = None
+        if tg_user_id is not None:
+            # Cache max in-process for speed.
+            global _N1_SEQ_MAX_CACHE
+            try:
+                _N1_SEQ_MAX_CACHE
+            except Exception:
+                _N1_SEQ_MAX_CACHE = {"value": None}
 
-        # Fallback: legacy split fields (Option A..D)
-        if not opts:
-            o = [fields.get("Option A"), fields.get("Option B"), fields.get("Option C"), fields.get("Option D")]
-            if any(x is not None for x in o):
-                opts = [str(x) for x in o]
+            if _N1_SEQ_MAX_CACHE.get("value") is None:
+                payload, st, detail = _airtable_get({
+                    "maxRecords": 1,
+                    "pageSize": 1,
+                    "sort[0][field]": "N1_seq",
+                    "sort[0][direction]": "desc",
+                    **({"view": q_view} if q_view else {}),
+                })
+                if st == 200 and payload and payload.get("records"):
+                    try:
+                        v = payload["records"][0].get("fields", {}).get("N1_seq")
+                        if isinstance(v, (int, float)):
+                            _N1_SEQ_MAX_CACHE["value"] = int(v)
+                    except Exception:
+                        pass
+            n1_seq_max = _N1_SEQ_MAX_CACHE.get("value")
 
-        # Ensure exactly 4 options when available
-        if len(opts) != 4:
-            return []
-        return opts
+        anchor = None
+        if isinstance(n1_seq_max, int) and n1_seq_max and n1_seq_max > 1:
+            try:
+                anchor = random.randint(1, n1_seq_max)
+            except Exception:
+                anchor = None
 
-    mapped = []
-    for rec in records:
-        f = rec.get("fields", {})
+        # ---- fetch candidates from Airtable (two passes to wrap) ----
+        def _fetch_candidates(filter_formula: str | None, max_records: int):
+            params = {
+                "pageSize": 100,
+                "maxRecords": max_records,
+            }
+            if q_view:
+                params["view"] = q_view
+            if filter_formula:
+                params["filterByFormula"] = filter_formula
+            # Sort by N1_seq if available (best-effort)
+            params["sort[0][field]"] = "N1_seq"
+            params["sort[0][direction]"] = "asc"
 
-        opts = _options_from_fields(f)
+            payload, st, detail = _airtable_get(params)
+            if st != 200:
+                return None, st, detail
+            return payload.get("records") or [], 200, ""
 
-        # Correct index (robust int)
-        ci = f.get("Correct_index")
+        want_candidates = max(250, count * 25)
+        records = []
+
+        if anchor is not None:
+            recs1, st1, det1 = _fetch_candidates(f"{{N1_seq}} >= {anchor}", want_candidates)
+            if st1 != 200:
+                # If N1_seq is unknown (422), fall back to view-only fetch below.
+                recs1 = []
+            recs2, st2, det2 = _fetch_candidates(f"{{N1_seq}} < {anchor}", want_candidates)
+            if st2 != 200:
+                recs2 = []
+            records = (recs1 or []) + (recs2 or [])
+
+        if not records:
+            recs0, st0, det0 = _fetch_candidates(None, want_candidates)
+            if st0 != 200:
+                return jsonify({
+                    "error": "airtable_http_error",
+                    "status_code": st0,
+                    "detail": det0,
+                }), 502
+            records = recs0 or []
+
+        # Shuffle locally to avoid stable view ordering.
         try:
-            ci = int(ci)
+            random.shuffle(records)
         except Exception:
-            ci = 0
+            pass
 
-        explanation = (
-            f.get("Explanation")
-            or f.get("Explication")
-            or f.get("explanation")
-        )
-        domaine = (
-            f.get("Domaine_canon")
-            or f.get("Domaine")
-            or f.get("Domaine_raw")
-            or f.get("Domaine_legacy")
-        )
-        niveau = f.get("Niveau") or f.get("niveau")
+        # ---- select unique questions, excluding recent ----
+        selected = []
+        selected_ids = set()
 
-        mapped.append({
-            "id": f.get("ID_question"),
-            "question": f.get("Question"),
-            "options": opts,
-            "correct_index": ci,
-            "explanation": explanation,
-            "domaine": domaine,
-            "niveau": niveau,
-        })
+        for rec in records:
+            q = _normalize_record(rec)
+            if not q:
+                continue
+            qid = q.get("id")
+            if not qid:
+                continue
+            if qid in selected_ids:
+                continue
+            if excluded_ids and qid in excluded_ids:
+                continue
+            selected.append({k: v for k, v in q.items() if not k.startswith("_")})
+            selected_ids.add(qid)
+            if len(selected) >= count:
+                break
 
+        # If we failed to fill, relax gradually by trimming excluded_ids (keep most recent first).
+        if len(selected) < count and excluded_ids and history_ids:
+            # keep only the most recent half, then retry from the same pool
+            keep = max(0, (len(history_ids) // 2))
+            relaxed_excluded = set(str(x) for x in history_ids[:keep] if x)
+            # keep served cache always
+            for x in recent_served or []:
+                if x:
+                    relaxed_excluded.add(str(x))
 
-    # Persist served IDs (best-effort) so rapid successive calls won't repeat
-    if anti_repeat_flag and tg_user_id:
-        try:
-            _anti_repeat__mark_served(tg_user_id, [m.get('id') for m in mapped if isinstance(m, dict) and m.get('id')], max_keep=history_cap)
-        except Exception as e:
-            print(f"🟧 anti-repeat served-history write failed: {e}", flush=True)
-    if anti_debug is not None:
-        returned_ids = [m.get("id") for m in mapped if isinstance(m, dict) and m.get("id")]
-        overlap = sorted(list(set(returned_ids) & set([str(x) for x in strict_ids])))
-        anti_debug["returned_ids"] = returned_ids
-        anti_debug["overlap_with_strict_ids"] = overlap
-        anti_debug["overlap_with_strict_ids_count"] = len(overlap)
-        if reintro_id is not None:
-            anti_debug["reintro_included"] = (reintro_id in returned_ids)
+            for rec in records:
+                if len(selected) >= count:
+                    break
+                q = _normalize_record(rec)
+                if not q:
+                    continue
+                qid = q.get("id")
+                if not qid or qid in selected_ids:
+                    continue
+                if qid in relaxed_excluded:
+                    continue
+                selected.append({k: v for k, v in q.items() if not k.startswith("_")})
+                selected_ids.add(qid)
 
-    payload = {"count": count, "questions": mapped}
-    if anti_debug is not None:
-        payload["anti_repeat"] = anti_debug
-    if debug_anti and debug_anti:
-        payload["anti_repeat_debug"] = debug_anti
-    return jsonify(payload), 200
+        # last resort: allow repeats if dataset too small
+        if len(selected) < count:
+            for rec in records:
+                if len(selected) >= count:
+                    break
+                q = _normalize_record(rec)
+                if not q:
+                    continue
+                qid = q.get("id")
+                if not qid or qid in selected_ids:
+                    continue
+                selected.append({k: v for k, v in q.items() if not k.startswith("_")})
+                selected_ids.add(qid)
 
+        # Mark served cache (best-effort)
+        if anti_repeat_flag and tg_user_id and selected:
+            try:
+                _anti_repeat__mark_served(str(tg_user_id), [q.get("id") for q in selected if q.get("id")], max_keep=max(200, anti_repeat_rituals * max(15, count)))
+            except Exception:
+                pass
 
-# -----------------------------------------------------
-# Errors
-# -----------------------------------------------------
+        resp = {
+            "count": len(selected),
+            "questions": selected,
+        }
+
+        if debug_history:
+            resp["anti_repeat"] = {
+                "enabled": bool(anti_repeat_flag and tg_user_id and anti_repeat_rituals > 0),
+                "telegram_user_id": str(tg_user_id) if tg_user_id else None,
+                "anti_repeat_rituals": anti_repeat_rituals,
+                "excluded_ids_count": len(excluded_ids),
+                "history_ids_count": len(history_ids),
+                "served_cache_count": len(recent_served),
+                "attempts_rows": attempts_rows,
+            }
+
+        return jsonify(resp)
+
+    except Exception as e:
+        return jsonify({
+            "error": "internal_server_error",
+            "detail": str(e),
+        }), 500
+
 @app.errorhandler(404)
 def not_found(_):
     return jsonify({"error": "not_found"}), 404
