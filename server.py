@@ -6,6 +6,7 @@
 # - Tirage réellement aléatoire via champ "Rand" (Airtable)
 
 import os
+import time
 
 # Base directory (stable across gunicorn workers regardless of CWD)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -494,7 +495,7 @@ def add_cors_headers(response):
 @app.get("/")
 def root():
     return jsonify({
-        "service": "velvetoracle",
+        "service": "velvet-mcp-core",
         "status": "ok",
         "version": APP_VERSION,
     }), 200
@@ -881,6 +882,77 @@ def _anti_repeat_is_similar_to_map(q_norm: str, a_norm: str, ref_map: dict, thre
     except Exception:
         return False
 
+
+
+# -----------------------------------------------------
+# Airtable — Questions config (supports dedicated base/table/view)
+# -----------------------------------------------------
+# Prefer these (official Questions base/table/view):
+#   AIRTABLE_QUESTIONS_BASE
+#   AIRTABLE_QUESTIONS_TABLE
+#   AIRTABLE_QUESTIONS_VUE   (or AIRTABLE_QUESTIONS_VIEW)
+# Optional:
+#   AIRTABLE_QUESTIONS_SORT_FIELD (default: Rand)
+# Notes:
+# - Falls back to legacy AIRTABLE_BASE_ID / AIRTABLE_TABLE_ID
+# - Keeps core tables (players/attempts/...) untouched.
+
+_QUESTIONS_MAX_CACHE = {
+    'field': None,
+    'value': None,
+    'ts': 0.0,
+}
+
+
+def _questions_airtable_config():
+    api_key = (os.getenv('AIRTABLE_API_KEY') or os.getenv('AIRTABLE_KEY') or '').strip()
+    base_id = (os.getenv('AIRTABLE_QUESTIONS_BASE') or os.getenv('AIRTABLE_BASE_ID') or '').strip()
+    table_id = (os.getenv('AIRTABLE_QUESTIONS_TABLE') or os.getenv('AIRTABLE_TABLE_ID') or '').strip()
+    view_id = (os.getenv('AIRTABLE_QUESTIONS_VUE') or os.getenv('AIRTABLE_QUESTIONS_VIEW') or os.getenv('AIRTABLE_QUESTIONS_VIEW_ID') or '').strip()
+    sort_field = (os.getenv('AIRTABLE_QUESTIONS_SORT_FIELD') or os.getenv('AIRTABLE_QUESTIONS_RANDOM_FIELD') or 'Rand').strip()
+    return api_key, base_id, table_id, view_id, sort_field
+
+
+def _airtable_err_unknown_field(text: str) -> bool:
+    try:
+        if not text:
+            return False
+        t = text.lower()
+        return ('unknown field' in t) or ('unknown_field_name' in t)
+    except Exception:
+        return False
+
+
+def _questions_get_max_numeric(base_url: str, headers: dict, field: str, view_id: str = '', ttl_sec: int = 300):
+    # Best-effort cached max value for numeric field.
+    try:
+        now = time.time()
+        if _QUESTIONS_MAX_CACHE.get('field') == field and _QUESTIONS_MAX_CACHE.get('value') is not None and (now - float(_QUESTIONS_MAX_CACHE.get('ts') or 0)) < ttl_sec:
+            return _QUESTIONS_MAX_CACHE.get('value')
+
+        params = {
+            'maxRecords': 1,
+            'sort[0][field]': field,
+            'sort[0][direction]': 'desc',
+        }
+        if view_id:
+            params['view'] = view_id
+
+        rr = requests.get(base_url, headers=headers, params=params, timeout=10)
+        if rr.status_code != 200:
+            return None
+        recs = rr.json().get('records', []) or []
+        if not recs:
+            return None
+        f = (recs[0].get('fields') or {})
+        v = f.get(field)
+        if isinstance(v, (int, float)):
+            _QUESTIONS_MAX_CACHE.update({'field': field, 'value': int(v), 'ts': now})
+            return int(v)
+        return None
+    except Exception:
+        return None
+
 # -----------------------------------------------------
 # Questions — tirage aléatoire + mapping propre
 # -----------------------------------------------------
@@ -897,9 +969,7 @@ def questions_random():
 
     count = max(1, min(50, count))
 
-    api_key = os.getenv("AIRTABLE_API_KEY")
-    base_id = os.getenv("AIRTABLE_BASE_ID")
-    table_id = os.getenv("AIRTABLE_TABLE_ID")
+    api_key, base_id, table_id, view_id, sort_field = _questions_airtable_config()
 
     if not (api_key and base_id and table_id):
         return jsonify({"error": "missing_env"}), 500
@@ -1042,11 +1112,13 @@ def questions_random():
 
     # Exclude only the strict window at query-level; the full anti-repeat is enforced after fetch.
     exclude_set = strict_set
-
     headers = {"Authorization": f"Bearer {api_key}"}
     base_url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
 
-    threshold = random.randint(0, 999_999)
+    # Random selection field (default: Rand).
+    # If the field does not exist in this base, we fallback to N1_seq (stable for N1 views).
+    primary_field = (sort_field or 'Rand').strip() or 'Rand'
+    fallback_field = 'N1_seq'
 
     def _build_exclude_clause(ids):
         parts = []
@@ -1062,37 +1134,72 @@ def questions_random():
             return None
         return f"NOT(OR({','.join(parts)}))"
 
-    def fetch_chunk(formula: str):
+    def _threshold_for_field(field: str) -> int:
+        try:
+            if field.lower() == 'rand':
+                return random.randint(0, 999_999)
+        except Exception:
+            pass
+        maxv = _questions_get_max_numeric(base_url, headers, field, view_id=view_id)
+        if isinstance(maxv, int) and maxv > 0:
+            return random.randint(0, maxv)
+        # Conservative fallback
+        return random.randint(0, 999_999)
+
+    def fetch_chunk(formula: str, sort_field_name: str):
         # Fetch a wider window when anti-repeat is active to keep the probability of filling `count` high.
         max_records = count
         if exclude_set or (anti_repeat_flag and tg_user_id):
             max_records = min(250, max(count, count * 10))
 
         params = {
-            "maxRecords": int(max_records),
-            "filterByFormula": formula,
-            "sort[0][field]": "Rand",
-            "sort[0][direction]": "asc",
+            'maxRecords': int(max_records),
+            'filterByFormula': formula,
+            'sort[0][field]': sort_field_name,
+            'sort[0][direction]': 'asc',
         }
+        if view_id:
+            params['view'] = view_id
         rr = requests.get(base_url, headers=headers, params=params, timeout=10)
         if rr.status_code != 200:
             return rr, []
-        return rr, rr.json().get("records", [])
+        return rr, rr.json().get('records', [])
 
-    exclude_clause = _build_exclude_clause(list(exclude_set))
+    def _fetch_records_with_field(field: str):
+        threshold = _threshold_for_field(field)
+        exclude_clause = _build_exclude_clause(list(exclude_set))
 
-    f1 = f"{{Rand}}>={threshold}"
-    if exclude_clause:
-        f1 = f"AND({f1}, {exclude_clause})"
-
-    r1, recs = fetch_chunk(f1)
-
-    if r1.status_code == 200 and len(recs) < count:
-        f2 = f"{{Rand}}<{threshold}"
+        f1 = f'{{{field}}}>={threshold}'
         if exclude_clause:
-            f2 = f"AND({f2}, {exclude_clause})"
-        r2, recs2 = fetch_chunk(f2)
-        recs = recs + recs2
+            f1 = f'AND({f1}, {exclude_clause})'
+
+        r1, recs = fetch_chunk(f1, field)
+
+        if r1.status_code == 200 and len(recs) < count:
+            f2 = f'{{{field}}}<{threshold}'
+            if exclude_clause:
+                f2 = f'AND({f2}, {exclude_clause})'
+            r2, recs2 = fetch_chunk(f2, field)
+            # Keep recs even if r2 failed, but propagate a hard error if both chunks failed.
+            if r2.status_code == 200:
+                recs = recs + recs2
+            elif not recs:
+                return r2, []
+        return r1, recs
+
+    r1, recs = _fetch_records_with_field(primary_field)
+    active_field = primary_field
+    if r1.status_code != 200 and _airtable_err_unknown_field(r1.text or '') and primary_field != fallback_field:
+        r1, recs = _fetch_records_with_field(fallback_field)
+        active_field = fallback_field
+
+    if r1.status_code != 200:
+        return jsonify({
+            'error': 'airtable_http_error',
+            'status_code': r1.status_code,
+            'detail': (r1.text or '')[:2000],
+        }), 500
+
 
 
     # -------------------------------------------------
@@ -1117,13 +1224,15 @@ def questions_random():
                     chunk = ids[i:i+batch]
                     parts = []
                     for qid in chunk:
-                        s = str(qid).replace('"', '\"')
+                        s = str(qid).replace('"', '\\"')
                         parts.append(f'{{ID_question}}="{s}"')
                     formula = 'OR(' + ','.join(parts) + ')'
                     params = {
                         'maxRecords': len(chunk),
                         'filterByFormula': formula,
                     }
+                    if view_id:
+                        params['view'] = view_id
                     rr = requests.get(base_url, headers=headers, params=params, timeout=10)
                     if rr.status_code != 200:
                         continue
@@ -1161,9 +1270,9 @@ def questions_random():
     want_reintro = bool(anti_repeat_flag and tg_user_id and anti_repeat_phase == 2 and reintro_id)
     if want_reintro:
         try:
-            rid = str(reintro_id).replace('"', '\"')
+            rid = str(reintro_id).replace('"', '\\"')
             formula = f'{{ID_question}}="{rid}"'
-            rr = requests.get(base_url, headers=headers, params={'maxRecords': 1, 'filterByFormula': formula}, timeout=10)
+            rr = requests.get(base_url, headers=headers, params=({'maxRecords': 1, 'filterByFormula': formula, **({'view': view_id} if view_id else {})}), timeout=10)
             if rr.status_code == 200:
                 recs0 = rr.json().get('records', []) or []
                 if recs0:
