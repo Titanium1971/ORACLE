@@ -846,22 +846,13 @@ def _anti_repeat_extract_options(raw_opts):
 
 
 def _anti_repeat_fingerprint_from_fields(fields: dict):
-    # Return (question_norm, answer_norm) from an Airtable question record fields.
+    """Return (question_norm, answer_norm) from an Airtable question record fields."""
     if not isinstance(fields, dict):
         return None
     q = fields.get('Question') or fields.get('question')
-    raw_opts = fields.get('Options (JSON)') or fields.get('Options') or fields.get('options')
-    opts = _anti_repeat_extract_options(raw_opts)
-    if not opts:
-        opts = [
-            fields.get('Option_A') or fields.get('Option A'),
-            fields.get('Option_B') or fields.get('Option B'),
-            fields.get('Option_C') or fields.get('Option C'),
-            fields.get('Option_D') or fields.get('Option D'),
-        ]
-        opts = [str(x) for x in opts if x is not None]
+    opts = _anti_repeat_extract_options(fields.get('Options (JSON)') or fields.get('Options') or fields.get('options'))
     try:
-        correct_index = int(float(fields.get('Correct_index', 0)))
+        correct_index = int(fields.get('Correct_index', 0))
     except Exception:
         correct_index = 0
     ans = ""
@@ -907,10 +898,8 @@ def questions_random():
     count = max(1, min(50, count))
 
     api_key = os.getenv("AIRTABLE_API_KEY")
-    # Questions table: prefer dedicated secrets, fallback to legacy ones
-    base_id = os.getenv("AIRTABLE_QUESTIONS_BASE") or os.getenv("AIRTABLE_BASE_ID")
-    table_id = os.getenv("AIRTABLE_QUESTIONS_TABLE") or os.getenv("AIRTABLE_TABLE_ID")
-    view_name = os.getenv("AIRTABLE_QUESTIONS_VUE") or os.getenv("AIRTABLE_VIEW_NAME") or os.getenv("AIRTABLE_VIEW")
+    base_id = os.getenv("AIRTABLE_BASE_ID")
+    table_id = os.getenv("AIRTABLE_TABLE_ID")
 
     if not (api_key and base_id and table_id):
         return jsonify({"error": "missing_env"}), 500
@@ -1057,37 +1046,7 @@ def questions_random():
     headers = {"Authorization": f"Bearer {api_key}"}
     base_url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
 
-    # Randomization field: default to N1_seq for the Questions-N1 view, else legacy Rand
-    random_field = os.getenv("AIRTABLE_RANDOM_FIELD") or os.getenv("AIRTABLE_QUESTIONS_RANDOM_FIELD")
-    if not random_field:
-        random_field = "N1_seq" if (os.getenv("AIRTABLE_QUESTIONS_BASE") or os.getenv("AIRTABLE_QUESTIONS_TABLE") or view_name) else "Rand"
-
-    def _fetch_max_numeric(field: str):
-        try:
-            params = {
-                "maxRecords": 1,
-                "sort[0][field]": field,
-                "sort[0][direction]": "desc",
-            }
-            if view_name:
-                params["view"] = view_name
-            rr = requests.get(base_url, headers=headers, params=params, timeout=10)
-            if rr.status_code != 200:
-                return None
-            recs = rr.json().get("records", []) or []
-            if not recs:
-                return None
-            v = (recs[0].get("fields") or {}).get(field)
-            if v is None:
-                return None
-            return int(float(v))
-        except Exception:
-            return None
-
-    max_numeric = _fetch_max_numeric(random_field)
-    if not max_numeric or max_numeric <= 0:
-        max_numeric = 999999 if random_field == "Rand" else 100000
-    threshold = random.randint(1, max_numeric)
+    threshold = random.randint(0, 999_999)
 
     def _build_exclude_clause(ids):
         parts = []
@@ -1112,11 +1071,9 @@ def questions_random():
         params = {
             "maxRecords": int(max_records),
             "filterByFormula": formula,
-            "sort[0][field]": random_field,
+            "sort[0][field]": "Rand",
             "sort[0][direction]": "asc",
         }
-        if view_name:
-            params["view"] = view_name
         rr = requests.get(base_url, headers=headers, params=params, timeout=10)
         if rr.status_code != 200:
             return rr, []
@@ -1124,14 +1081,14 @@ def questions_random():
 
     exclude_clause = _build_exclude_clause(list(exclude_set))
 
-    f1 = f"{{{random_field}}}>={threshold}"
+    f1 = f"{{Rand}}>={threshold}"
     if exclude_clause:
         f1 = f"AND({f1}, {exclude_clause})"
 
     r1, recs = fetch_chunk(f1)
 
     if r1.status_code == 200 and len(recs) < count:
-        f2 = f"{{{random_field}}}<{threshold}"
+        f2 = f"{{Rand}}<{threshold}"
         if exclude_clause:
             f2 = f"AND({f2}, {exclude_clause})"
         r2, recs2 = fetch_chunk(f2)
@@ -1167,8 +1124,6 @@ def questions_random():
                         'maxRecords': len(chunk),
                         'filterByFormula': formula,
                     }
-                    if view_name:
-                        params['view'] = view_name
                     rr = requests.get(base_url, headers=headers, params=params, timeout=10)
                     if rr.status_code != 200:
                         continue
@@ -1208,10 +1163,7 @@ def questions_random():
         try:
             rid = str(reintro_id).replace('"', '\"')
             formula = f'{{ID_question}}="{rid}"'
-            params = {'maxRecords': 1, 'filterByFormula': formula}
-            if view_name:
-                params['view'] = view_name
-            rr = requests.get(base_url, headers=headers, params=params, timeout=10)
+            rr = requests.get(base_url, headers=headers, params={'maxRecords': 1, 'filterByFormula': formula}, timeout=10)
             if rr.status_code == 200:
                 recs0 = rr.json().get('records', []) or []
                 if recs0:
@@ -1311,37 +1263,21 @@ def questions_random():
     for rec in records:
         f = rec.get("fields", {})
 
-        # Options: prefer JSON field if present, else build from Option_A..D
-        opts = []
-        raw_opts = f.get("Options (JSON)") or f.get("Options") or f.get("options")
-        if raw_opts is not None:
-            try:
-                opts = json.loads(raw_opts) if isinstance(raw_opts, str) else (raw_opts or [])
-            except Exception:
-                opts = []
-        if not opts:
-            opts = [
-                f.get("Option_A") or f.get("Option A"),
-                f.get("Option_B") or f.get("Option B"),
-                f.get("Option_C") or f.get("Option C"),
-                f.get("Option_D") or f.get("Option D"),
-            ]
-        opts = [x for x in (opts or []) if x is not None]
-
+        raw_opts = f.get("Options (JSON)", "[]")
         try:
-            correct_idx = int(float(f.get("Correct_index", 0)))
+            opts = json.loads(raw_opts) if isinstance(
+                raw_opts, str) else (raw_opts or [])
         except Exception:
-            correct_idx = 0
+            opts = []
 
         mapped.append({
             "id": f.get("ID_question"),
-            "question": f.get("Question") or f.get("question"),
+            "question": f.get("Question"),
             "options": opts,
-            "correct_index": correct_idx,
-            "explanation": f.get("Explanation") or f.get("Explication") or f.get("explanation"),
-            "domaine": f.get("Domaine_canon") or f.get("Domaine") or f.get("domaine"),
-            "sous_domaine": f.get("Sous_domaine_canon") or f.get("Sous-domaine") or f.get("sous_domaine"),
-            "niveau": f.get("Niveau") or f.get("niveau"),
+            "correct_index": f.get("Correct_index"),
+            "explanation": f.get("Explication"),
+            "domaine": f.get("Domaine"),
+            "niveau": f.get("Niveau"),
         })
 
 
